@@ -15,9 +15,12 @@ TrendingTab 是一个 macOS 14+ 的热榜聚合应用。桌面小组件负责快
 ```sh
 swift test --build-path /Volumes/TrendingTabBuild/swift --cache-path /Volumes/TrendingTabBuild/cache
 xcodebuild -project TrendingTab.xcodeproj -scheme TrendingTab -destination 'platform=macOS' build
+zsh scripts/package-dmg.sh
 ```
 
-外接 APFS 构建卷可用时优先使用上述缓存路径；未挂载时省略两个路径参数。
+外接 APFS 构建卷可用时优先使用上述缓存路径；未挂载时省略两个路径参数。打包脚本在发现本机 Developer ID 时签名，否则生成 ad-hoc 签名的 DMG。
+
+`main` 分支的 CI 会运行测试、构建 DMG，并把产物发布到 GitHub Release。配置 `APPLE_CERTIFICATE_P12`、`APPLE_CERTIFICATE_PASSWORD`、`KEYCHAIN_PASSWORD` 后，CI 改用 Developer ID 签名；再配置公证凭据后才会提交 Apple 公证。
 
 ## 文档
 
