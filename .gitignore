@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.sqlite
+*.sqlite-*
+*.pem
+*.p12
+.env
+Secrets/
