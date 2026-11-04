@@ -11,13 +11,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
 
       - name: Show toolchain
         run: |
