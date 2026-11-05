@@ -109,44 +109,65 @@ if [[ "$extension_point" != "com.apple.widgetkit-extension" ]]; then
   exit 1
 fi
 
-timestamp_mode="${CODESIGN_TIMESTAMP:-auto}"
-if [[ "$sign_identity" == "-" ]]; then
-  timestamp_mode="none"
-elif [[ "$timestamp_mode" == auto ]]; then
-  if curl --silent --show-error --head --max-time 8 https://timestamp.apple.com/ts01 >/dev/null; then
+timestamp_mode="${CODESIGN_TIMESTAMP:-}"
+if [[ -z "$timestamp_mode" ]]; then
+  if [[ "$signing_mode" == "developer-id" ]]; then
     timestamp_mode="required"
   else
-    echo "Apple timestamp service is unreachable; signing without a timestamp."
+    timestamp_mode="none"
+  fi
+elif [[ "$timestamp_mode" == "auto" ]]; then
+  if [[ "$signing_mode" == "developer-id" ]]; then
+    timestamp_mode="required"
+  else
     timestamp_mode="none"
   fi
 fi
+
 timestamp_args=()
-if [[ "$timestamp_mode" == none ]]; then
+if [[ "$timestamp_mode" == "none" ]]; then
   timestamp_args+=(--timestamp=none)
-else
+elif [[ "$timestamp_mode" == "required" ]]; then
   timestamp_args+=(--timestamp)
+else
+  echo "CODESIGN_TIMESTAMP must be required, none, or auto." >&2
+  exit 1
 fi
 
 if [[ "$signing_mode" == "developer-id" && -n "${NOTARY_KEYCHAIN_PROFILE:-}" &&
       "$timestamp_mode" == "none" ]]; then
-  echo "Notarization requires a secure timestamp, but Apple's timestamp service was unavailable." >&2
+  echo "Notarization requires CODESIGN_TIMESTAMP=required." >&2
   exit 1
 fi
 
-codesign \
+sign_with_retry() {
+  local target="$1"
+  shift
+  local attempt
+  for attempt in 1 2 3; do
+    if codesign "$@" "$target"; then
+      return 0
+    fi
+    if (( attempt < 3 )); then
+      echo "Code signing failed for $(basename "$target"); retrying in $((attempt * 5)) seconds." >&2
+      sleep $((attempt * 5))
+    fi
+  done
+  return 1
+}
+
+sign_with_retry "$widget_bundle" \
   --force \
   --options runtime \
   --sign "$sign_identity" \
   "${timestamp_args[@]}" \
-  --entitlements "$root/Widget/TrendingTabWidget.entitlements" \
-  "$widget_bundle"
-codesign \
+  --entitlements "$root/Widget/TrendingTabWidget.entitlements"
+sign_with_retry "$app" \
   --force \
   --options runtime \
   --sign "$sign_identity" \
   "${timestamp_args[@]}" \
-  --entitlements "$root/App/TrendingTab.entitlements" \
-  "$app"
+  --entitlements "$root/App/TrendingTab.entitlements"
 codesign --verify --deep --strict --verbose=2 "$app"
 
 app_signature="$(codesign -d --entitlements :- "$app" 2>/dev/null)"
@@ -182,7 +203,10 @@ hdiutil create \
 hdiutil verify "$dmg"
 
 if [[ "$signing_mode" == "developer-id" ]]; then
-  codesign --force --sign "$sign_identity" "${timestamp_args[@]}" "$dmg"
+  sign_with_retry "$dmg" \
+    --force \
+    --sign "$sign_identity" \
+    "${timestamp_args[@]}"
   codesign --verify --verbose=2 "$dmg"
 
   if [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then

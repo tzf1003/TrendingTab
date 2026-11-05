@@ -51,6 +51,8 @@ gh workflow run ci.yml --repo tzf1003/TrendingTab --ref main
 5. 对 Developer ID 构建提交 Apple 公证并 stapling。
 6. 校验 DMG、生成 SHA-256、上传 Artifact 并发布 Latest Release。
 
+Developer ID 构建默认请求 Apple 安全时间戳，并在签名时进行有限重试。`CODESIGN_TIMESTAMP=none` 只用于本地 ad-hoc 测试；需要公证的构建会拒绝使用该设置。
+
 应用内“设置 → 更新”读取 GitHub Latest Release。下载后会核对版本、SHA-256、bundle identifier 和代码签名，再通过临时目录和备份完成原子替换。
 
 ## 4. 本地打包
