@@ -22,6 +22,8 @@ def verify(bundle, identifier, developer_id):
     check(info["CFBundleIdentifier"] == identifier, f"Unexpected bundle ID: {bundle.name}")
     run("codesign", "--verify", "--strict", str(bundle))
     entitlements = plistlib.loads(run("codesign", "-d", "--entitlements", ":-", str(bundle)))
+    check(not entitlements.get("com.apple.security.get-task-allow", False),
+          f"Debugger access enabled in distribution bundle: {bundle.name}")
     check("group.dev.trendingtab.shared" in entitlements.get("com.apple.security.application-groups", []),
           f"App Group missing: {bundle.name}")
     if bundle.suffix == ".appex":

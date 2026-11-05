@@ -97,12 +97,22 @@ widget_info="$widget_bundle/Contents/Info.plist"
 test -d "$app"
 test -d "$widget_bundle"
 
-# Xcode adds the application and team identities required by App Intents.
-# Preserve the complete signed entitlements when signing the final bundles.
+# Preserve the application and team identities required by App Intents, and
+# remove Xcode's debugger access before signing the distribution bundles.
 signing_entitlements="$(mktemp -d "$output_dir/entitlements.XXXXXX")"
 trap 'rm -rf "$signing_entitlements"' EXIT
 codesign -d --entitlements :- "$app" > "$signing_entitlements/app.plist" 2>/dev/null
 codesign -d --entitlements :- "$widget_bundle" > "$signing_entitlements/widget.plist" 2>/dev/null
+python3 - "$signing_entitlements/app.plist" "$signing_entitlements/widget.plist" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+for filename in sys.argv[1:]:
+    path = Path(filename)
+    entitlements = plistlib.loads(path.read_bytes())
+    entitlements.pop("com.apple.security.get-task-allow", None)
+    path.write_bytes(plistlib.dumps(entitlements))
+PY
 
 # Keep the extension point in the generated Info.plist, then sign the final
 # nested code and the containing app in order.
@@ -224,10 +234,27 @@ if [[ "$signing_mode" == "developer-id" ]]; then
 
   if [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
     echo "Submitting DMG for notarization."
+    notary_result="$output_dir/notarization.json"
+    notary_exit=0
     xcrun notarytool submit \
       "$dmg" \
       --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-      --wait
+      --wait \
+      --output-format json > "$notary_result" || notary_exit=$?
+    cat "$notary_result"
+    notary_status="$(plutil -extract status raw -o - "$notary_result" 2>/dev/null || true)"
+    if (( notary_exit != 0 )) || [[ "$notary_status" != "Accepted" ]]; then
+      submission_id="$(plutil -extract id raw -o - "$notary_result" 2>/dev/null || true)"
+      if [[ -n "$submission_id" ]]; then
+        notary_log="$output_dir/notarization-log.json"
+        if xcrun notarytool log "$submission_id" \
+            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" "$notary_log"; then
+          cat "$notary_log"
+        fi
+      fi
+      echo "Apple notarization failed: ${notary_status:-submission error}." >&2
+      exit 1
+    fi
     xcrun stapler staple "$dmg"
     xcrun stapler validate "$dmg"
   fi

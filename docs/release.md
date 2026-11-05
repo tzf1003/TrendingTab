@@ -53,6 +53,8 @@ gh workflow run ci.yml --repo tzf1003/TrendingTab --ref main
 
 Developer ID 构建默认请求 Apple 安全时间戳，并在签名时进行有限重试。`CODESIGN_TIMESTAMP=none` 只用于本地 ad-hoc 测试；需要公证的构建会拒绝使用该设置。
 
+最终签名保留 Xcode 生成的 Team ID、App ID 和 App Group，移除调试用的 `com.apple.security.get-task-allow`。打包校验同时检查这些运行身份和分发权限。公证状态必须为 `Accepted` 才会装订票据；Apple 拒绝时，CI 会输出对应的诊断日志。已有提交也可通过 `Notarization diagnostics` 工作流按 submission ID 查询。
+
 应用内“设置 → 更新”读取 GitHub Latest Release。下载后会核对版本、SHA-256、bundle identifier 和代码签名，再通过临时目录和备份完成原子替换。
 
 ## 4. 本地打包
