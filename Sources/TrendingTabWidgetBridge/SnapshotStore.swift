@@ -49,9 +49,9 @@ public enum SnapshotStore {
         }
     }
 
-    public static func read(fileManager: FileManager = .default, directory: URL? = nil) -> WidgetSnapshot? {
+    public static func read(fileManager: FileManager = .default, directory: URL? = nil, now: Date = .now) -> WidgetSnapshot? {
         guard let data = try? Data(contentsOf: snapshotURL(fileManager: fileManager, directory: directory)) else { return nil }
-        return try? TrendingJSON.value(WidgetSnapshot.self, from: data)
+        return (try? TrendingJSON.value(WidgetSnapshot.self, from: data))?.removingExpiredRows(at: now)
     }
 
     public static func updateSelection(

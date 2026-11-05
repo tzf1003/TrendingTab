@@ -79,7 +79,14 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func save(result: FetchResult) throws {
         try writer.write { database in
-            try database.execute(sql: "UPDATE items SET historical = 1 WHERE payload LIKE ?", arguments: ["%\"boardID\":\"\(result.boardID)\"%"])
+            let incomingIDs = Set(result.items.map(\.id))
+            for row in try Row.fetchAll(database, sql: "SELECT id, payload FROM items") {
+                guard let id: String = row["id"], let payload: String = row["payload"],
+                      let stored = try? TrendingJSON.value(StoredItem.self, from: Data(payload.utf8)),
+                      stored.item.boardID == result.boardID, !incomingIDs.contains(id) else { continue }
+                try database.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
+            }
+            try database.execute(sql: "DELETE FROM observations WHERE board_id = ?", arguments: [result.boardID])
             for entry in result.items {
                 let existing = try Row.fetchOne(database, sql: "SELECT payload, first_seen_at, content_hash FROM items WHERE id = ?", arguments: [entry.id])
                 let previous = existing.flatMap { row -> StoredItem? in
@@ -114,7 +121,9 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func recentItems(since: Date) throws -> [StoredItem] {
         try writer.read { database in
-            let rows = try Row.fetchAll(database, sql: "SELECT payload FROM items WHERE historical = 0 ORDER BY last_seen_at DESC")
+            let rows = try Row.fetchAll(database,
+                                       sql: "SELECT payload FROM items WHERE historical = 0 AND last_seen_at >= ? ORDER BY last_seen_at DESC",
+                                       arguments: [since])
             return rows.compactMap { row in
                 guard let payload: String = row["payload"] else { return nil }
                 return try? TrendingJSON.value(StoredItem.self, from: Data(payload.utf8))

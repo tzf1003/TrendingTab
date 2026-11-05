@@ -68,7 +68,7 @@ public enum TabAggregator {
         }
     }
 
-    public static func snapshot(tabs: [TabDefinition], profiles: [WidgetProfile], items: [StoredItem], events: [EventCluster], statuses: [SourceStatus], sources: [SourceDescriptor], unread: Int, generation: Int, now: Date) -> WidgetSnapshot {
+    public static func snapshot(tabs: [TabDefinition], profiles: [WidgetProfile], items: [StoredItem], events: [EventCluster], statuses: [SourceStatus], sources: [SourceDescriptor], unread: Int, generation: Int, now: Date, lifetime: TimeInterval = 1800) -> WidgetSnapshot {
         let rendered = tabs.filter { !$0.hidden }.map { tab in
             let result = rows(tab: tab, items: items, events: events, sources: sources, now: now)
             let names = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.title) })
@@ -77,10 +77,13 @@ public enum TabAggregator {
                 title: tab.title,
                 kind: tab.kind,
                 rows: result.rows.prefix(30).map { row in
-                    SnapshotRow(id: row.stored.id, title: row.stored.item.title, sourceTitle: names[row.stored.item.sourceID] ?? row.stored.item.sourceID, rank: row.stored.item.rank, movement: row.movement, url: row.stored.item.url, eventID: events.first { $0.itemIDs.contains(row.stored.id) }?.id, publishedAt: row.stored.item.publishedAt, score: row.score)
+                    SnapshotRow(id: row.stored.id, title: row.stored.item.title, sourceTitle: names[row.stored.item.sourceID] ?? row.stored.item.sourceID, rank: row.stored.item.rank, movement: row.movement, url: row.stored.item.url, eventID: events.first { $0.itemIDs.contains(row.stored.id) }?.id, publishedAt: row.stored.item.publishedAt, score: row.score, expiresAt: row.stored.lastSeenAt.addingTimeInterval(min(lifetime, tab.filter.timeWindow)))
                 },
                 coverage: result.coverage,
-                updatedAt: result.rows.map(\.stored.lastSeenAt).max()
+                updatedAt: result.rows.map(\.stored.lastSeenAt).max(),
+                expiresAt: result.rows.map(\.stored.lastSeenAt).max().map {
+                    $0.addingTimeInterval(min(lifetime, tab.filter.timeWindow))
+                }
             )
         }
         return WidgetSnapshot(generation: generation, generatedAt: now, profiles: profiles, tabs: rendered, statuses: statuses, unreadCount: unread)

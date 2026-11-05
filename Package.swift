@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .library(name: "TrendingTabKit", targets: ["TrendingTabKit"]),
+        .library(name: "TrendingTabCore", targets: ["TrendingTabCore"]),
+        .library(name: "TrendingTabWidgetBridge", targets: ["TrendingTabWidgetBridge"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.4.0"),

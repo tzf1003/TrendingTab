@@ -7,6 +7,7 @@ import TrendingTabNotifications
 import TrendingTabPersistence
 import TrendingTabSources
 import TrendingTabWidgetBridge
+import WidgetKit
 
 public struct DiagnosticRecord: Codable, Equatable, Sendable, Identifiable {
     public var id: String
@@ -35,6 +36,7 @@ public final class TrendingAppModel: ObservableObject {
     @Published public private(set) var updateState = "尚未检查"
     @Published public var requestedEventID: UUID?
     @Published public var requestedItemID: String?
+    @Published public var requestedTabID: UUID?
     @Published public var pendingEventToken = 0
     @Published public var analysisEventID: UUID?
 
@@ -43,10 +45,12 @@ public final class TrendingAppModel: ObservableObject {
     }
 
     public let database: AppDatabase
+    public let analysisChat = AnalysisChatModel()
     private let transport: any HTTPTransport
     private let cache = ConditionalCache()
     private let gate = RequestGate()
     private var loop: Task<Void, Never>?
+    private var expiryLoop: Task<Void, Never>?
     private var generation = 1
     private var lastFetch: [String: Date] = [:]
     private var backoff: [String: TimeInterval] = [:]
@@ -60,6 +64,14 @@ public final class TrendingAppModel: ObservableObject {
 
     public func start() {
         loop?.cancel()
+        expiryLoop?.cancel()
+        expiryLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self else { return }
+                self.expireContent()
+            }
+        }
         loop = Task { [weak self] in
             while let self, !Task.isCancelled {
                 if self.settings.automaticCollectionEnabled {
@@ -74,21 +86,26 @@ public final class TrendingAppModel: ObservableObject {
     public func stop() {
         loop?.cancel()
         loop = nil
+        expiryLoop?.cancel()
+        expiryLoop = nil
     }
 
     public func reveal(eventID: UUID) {
+        requestedTabID = nil
         requestedEventID = eventID
         requestedItemID = nil
         pendingEventToken += 1
     }
 
     public func reveal(itemID: String) {
+        requestedTabID = nil
         requestedItemID = itemID
         requestedEventID = events.first { $0.itemIDs.contains(itemID) }?.id
         pendingEventToken += 1
     }
 
-    public func reveal(itemID: String?, eventID: UUID?) {
+    public func reveal(itemID: String?, eventID: UUID?, tabID: UUID? = nil) {
+        requestedTabID = tabID
         requestedItemID = itemID
         requestedEventID = eventID ?? itemID.flatMap { id in
             events.first { $0.itemIDs.contains(id) }?.id
@@ -143,7 +160,10 @@ public final class TrendingAppModel: ObservableObject {
             let grouped = EventGrouper.group(items, now: now)
             let merged = merge(existing: events, grouped: grouped)
             let activeIDs = Set(items.map(\.id))
-            events = await analyze(merged.filter { event in event.itemIDs.contains { activeIDs.contains($0) } }, now: now)
+            events = merged.filter { event in event.itemIDs.contains { activeIDs.contains($0) } }
+            analysisChat.retain(itemIDs: activeIDs)
+            try publish(statuses: statuses, now: now)
+            events = await analyze(events, now: now)
             try database.save(events: events)
             try database.prune(now: now, itemCutoff: activeCutoff(now: now))
             try publish(statuses: statuses, now: now)
@@ -264,12 +284,59 @@ public final class TrendingAppModel: ObservableObject {
         }
     }
 
+    public func sendChatMessage(_ text: String, itemID: String) {
+        let connection = connections.first { $0.id == assignment.analysis }
+        analysisChat.send(text, itemID: itemID, evidence: analysisEvidence(for: itemID),
+                          connection: connection,
+                          credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) })
+    }
+
+    public func retryChat(itemID: String) {
+        let connection = connections.first { $0.id == assignment.analysis }
+        analysisChat.retry(itemID: itemID, evidence: analysisEvidence(for: itemID),
+                           connection: connection,
+                           credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) })
+    }
+
+    private func analysisEvidence(for itemID: String) -> String {
+        let event = events.first { $0.itemIDs.contains(itemID) }
+        let ids = Set(event?.itemIDs ?? [itemID])
+        let reports = items.filter { ids.contains($0.id) }.sorted {
+            if ($0.id == itemID) != ($1.id == itemID) { return $0.id == itemID }
+            return $0.lastSeenAt > $1.lastSeenAt
+        }.prefix(3)
+        return reports.enumerated().map { index, stored in
+            "[\(index + 1)] \(stored.item.title)\n来源：\(stored.item.sourceID)\n摘要：\(stored.item.summary ?? "当前材料仅有标题")\n链接：\(stored.item.url.absoluteString)"
+        }.joined(separator: "\n\n")
+    }
+
+    private func expireContent(now: Date = .now) {
+        let cutoff = activeCutoff(now: now)
+        if items.contains(where: { $0.lastSeenAt < cutoff }) {
+            try? database.prune(now: now, itemCutoff: cutoff)
+            items = (try? database.recentItems(since: cutoff)) ?? []
+            let activeIDs = Set(items.map(\.id))
+            events.removeAll { event in !event.itemIDs.contains(where: activeIDs.contains) }
+            analysisChat.retain(itemIDs: activeIDs)
+            try? publish(statuses: snapshot?.statuses ?? [], now: now)
+        }
+        if let current = snapshot {
+            let fresh = current.removingExpiredRows(at: now)
+            if fresh != current {
+                snapshot = fresh
+                try? SnapshotStore.write(fresh)
+                WidgetCenter.shared.reloadTimelines(ofKind: "TrendingTab")
+            }
+        }
+    }
+
     private func publish(statuses: [SourceStatus], now: Date) throws {
-        let rendered = TabAggregator.snapshot(tabs: tabs, profiles: profiles, items: items, events: events, statuses: statuses, sources: SourceCatalog.providers(customFeeds: feeds).map(\.descriptor), unread: events.filter { $0.status == "major" }.count, generation: generation, now: now)
+        let rendered = TabAggregator.snapshot(tabs: tabs, profiles: profiles, items: items, events: events, statuses: statuses, sources: SourceCatalog.providers(customFeeds: feeds).map(\.descriptor), unread: events.filter { $0.status == "major" }.count, generation: generation, now: now, lifetime: max(settings.refreshInterval * 2, 1800))
         generation += 1
         try SnapshotStore.write(rendered)
         snapshot = rendered
         _ = try SnapshotStore.updateSelection(profileID: profiles.first?.id ?? UUID(), tabID: nil, page: nil)
+        WidgetCenter.shared.reloadTimelines(ofKind: "TrendingTab")
     }
 
     public func load() {
@@ -294,6 +361,7 @@ public final class TrendingAppModel: ObservableObject {
             return event.itemIDs.contains { active.contains($0) }
         }
         snapshot = SnapshotStore.read()
+        generation = (snapshot?.generation ?? 0) + 1
         _ = try? database.recoverUnknownAIRuns()
         persistConfiguration()
     }

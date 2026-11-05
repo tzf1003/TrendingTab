@@ -7,8 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		259FE23DEDF5A511EC7C7A8E /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 985518EE169001BA6EC517C9 /* GRDB */; };
+		259FE23DEDF5A511EC7C7A8E /* TrendingTabWidgetBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */; };
 		2A985F7FA5733C05F23BD716 /* EventCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8916284782CEED2FD92DB4BB /* EventCenterView.swift */; };
+		2B16382781AFCAB9EEC3E98D /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA886431937937EAF8796EE /* WidgetIntents.swift */; };
 		4236D72465C5CE772D722296 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2FF922F4A5A464DF6ADA733 /* SettingsView.swift */; };
 		47E3E5CA9CEF3FB7EC189FF7 /* TrendingTabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8390706647DE91D092AE66E0 /* TrendingTabApp.swift */; };
 		4DF759D96EA8FE27AD98197E /* TrendingTabWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -17,9 +18,9 @@
 		7A675A93F84B5F07A34C41F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34EBB2AE5EB4B90006262732 /* AppTheme.swift */; };
 		82ADB27394191E336171F1E5 /* AppWindowRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */; };
 		85852B0A958B8DFC26792B69 /* MenuBarMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C7A3A19C77C70ECA78ABC1 /* MenuBarMenu.swift */; };
-		898BA540F76B8B2C78711686 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = AD2A31B1844BE1B0FFDD82F3 /* SwiftSoup */; };
+		9E35959CA0CFE4065A6CC9FD /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA886431937937EAF8796EE /* WidgetIntents.swift */; };
 		B481F4348D630BB2FE587422 /* TrendingTabKit in Frameworks */ = {isa = PBXBuildFile; productRef = E7A066C04D37DC612A3B23F0 /* TrendingTabKit */; };
-		D320460888DCF2F0600E0FBB /* TrendingTabKit in Frameworks */ = {isa = PBXBuildFile; productRef = FFC0B15AFF2B4B23F5D827F3 /* TrendingTabKit */; };
+		D320460888DCF2F0600E0FBB /* TrendingTabCore in Frameworks */ = {isa = PBXBuildFile; productRef = 323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,7 +58,9 @@
 		8916284782CEED2FD92DB4BB /* EventCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventCenterView.swift; sourceTree = "<group>"; };
 		901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppWindowRouter.swift; sourceTree = "<group>"; };
 		9E30FD59D494B35EAC5FBD98 /* TrendingTab */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TrendingTab; path = .; sourceTree = SOURCE_ROOT; };
+		9EA886431937937EAF8796EE /* WidgetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetIntents.swift; sourceTree = "<group>"; };
 		B3F5C21C305FCD682AC84967 /* TrendingTabWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TrendingTabWidget.entitlements; sourceTree = "<group>"; };
+		C1FE3AAC292509507F6B06B8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D2FF922F4A5A464DF6ADA733 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E40093D849855AFA5FA8ED8E /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -75,10 +78,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D320460888DCF2F0600E0FBB /* TrendingTabKit in Frameworks */,
+				D320460888DCF2F0600E0FBB /* TrendingTabCore in Frameworks */,
+				259FE23DEDF5A511EC7C7A8E /* TrendingTabWidgetBridge in Frameworks */,
 				73CDDD4BFCD03EB4AA68C207 /* AppIntents.framework in Frameworks */,
-				259FE23DEDF5A511EC7C7A8E /* GRDB in Frameworks */,
-				898BA540F76B8B2C78711686 /* SwiftSoup in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -111,6 +113,14 @@
 			path = Widget;
 			sourceTree = "<group>";
 		};
+		C90690B2733A97E2E0386EC5 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				9EA886431937937EAF8796EE /* WidgetIntents.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		D677B7C0E8714BD2FE7CA7AF /* Packages */ = {
 			isa = PBXGroup;
 			children = (
@@ -124,6 +134,7 @@
 			children = (
 				E195F38CD4FA77CC665AD395 /* App */,
 				D677B7C0E8714BD2FE7CA7AF /* Packages */,
+				C90690B2733A97E2E0386EC5 /* Shared */,
 				944032E37A45E67F3D0B3916 /* Widget */,
 				35B41382815CD74C3770D0AF /* Frameworks */,
 				409D652531D4F8D213DB23C3 /* Products */,
@@ -136,6 +147,7 @@
 				34EBB2AE5EB4B90006262732 /* AppTheme.swift */,
 				901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */,
 				8916284782CEED2FD92DB4BB /* EventCenterView.swift */,
+				C1FE3AAC292509507F6B06B8 /* Info.plist */,
 				30C7A3A19C77C70ECA78ABC1 /* MenuBarMenu.swift */,
 				D2FF922F4A5A464DF6ADA733 /* SettingsView.swift */,
 				277CFCCE03306D2A1F736345 /* TrendingTab.entitlements */,
@@ -181,9 +193,8 @@
 			);
 			name = TrendingTabWidget;
 			packageProductDependencies = (
-				FFC0B15AFF2B4B23F5D827F3 /* TrendingTabKit */,
-				985518EE169001BA6EC517C9 /* GRDB */,
-				AD2A31B1844BE1B0FFDD82F3 /* SwiftSoup */,
+				323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */,
+				23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */,
 			);
 			productName = TrendingTabWidget;
 			productReference = 0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */;
@@ -199,11 +210,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					7FD23EB5D8570835248EF2A0 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = GJUT2BVM7R;
 						ProvisioningStyle = Automatic;
 					};
 					F61E01C823373E4B9253841A = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = GJUT2BVM7R;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -239,6 +250,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7414A40F8C4BEFFC95E274AA /* WidgetBundle.swift in Sources */,
+				9E35959CA0CFE4065A6CC9FD /* WidgetIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -252,6 +264,7 @@
 				85852B0A958B8DFC26792B69 /* MenuBarMenu.swift in Sources */,
 				4236D72465C5CE772D722296 /* SettingsView.swift in Sources */,
 				47E3E5CA9CEF3FB7EC189FF7 /* TrendingTabApp.swift in Sources */,
+				2B16382781AFCAB9EEC3E98D /* WidgetIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -304,8 +317,8 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = GJUT2BVM7R;
-				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -374,6 +387,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/TrendingTab.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -393,6 +407,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/TrendingTab.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -532,21 +547,15 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		985518EE169001BA6EC517C9 /* GRDB */ = {
+		23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 078D2CFFE475D4FBED4EE2F0 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
+			productName = TrendingTabWidgetBridge;
 		};
-		AD2A31B1844BE1B0FFDD82F3 /* SwiftSoup */ = {
+		323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 9084747053F9F6B20043DF06 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
-			productName = SwiftSoup;
+			productName = TrendingTabCore;
 		};
 		E7A066C04D37DC612A3B23F0 /* TrendingTabKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = TrendingTabKit;
-		};
-		FFC0B15AFF2B4B23F5D827F3 /* TrendingTabKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TrendingTabKit;
 		};

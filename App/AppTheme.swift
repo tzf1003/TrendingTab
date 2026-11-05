@@ -1,41 +1,51 @@
+import AppKit
 import SwiftUI
 
 enum AppTheme {
-    static let accent = Color(red: 0.95, green: 0.34, blue: 0.19)
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
+            return NSColor(srgbRed: 1, green: 0.58, blue: 0.46, alpha: 1)
+        }
+        return NSColor(srgbRed: 0.67, green: 0.24, blue: 0.15, alpha: 1)
+    })
     static let accentSoft = accent.opacity(0.12)
+    static let actionTint = Color(red: 0.66, green: 0.23, blue: 0.15)
     static let canvas = Color(nsColor: .windowBackgroundColor)
     static let sidebar = Color(nsColor: .underPageBackgroundColor)
     static let card = Color(nsColor: .controlBackgroundColor)
-    static let field = Color(nsColor: .textBackgroundColor)
-    static let border = Color.primary.opacity(0.09)
-    static let subtleText = Color.secondary
+    static let rule = Color(nsColor: .separatorColor)
 }
 
 struct CardSurface<Content: View>: View {
-    var padding: CGFloat = 18
+    var padding: CGFloat = 20
     @ViewBuilder var content: Content
 
     var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AppTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(AppTheme.card, in: shape)
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(AppTheme.border, lineWidth: 1)
+                shape.strokeBorder(AppTheme.rule, lineWidth: 1)
+                    .allowsHitTesting(false)
             }
     }
 }
 
 struct SectionHeading: View {
     var title: String
-    var detail: String?
+    var detail: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.title3.weight(.semibold))
+            Text(title)
+                .font(.system(size: 18, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
             if let detail {
-                Text(detail).font(.callout).foregroundStyle(.secondary)
+                Text(detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -44,40 +54,67 @@ struct SectionHeading: View {
 struct StatusPill: View {
     var title: String
     var color: Color = AppTheme.accent
-    var systemImage: String?
 
     var body: some View {
-        HStack(spacing: 5) {
-            if let systemImage {
-                Image(systemName: systemImage)
-            } else {
-                Circle().fill(color).frame(width: 6, height: 6)
-            }
-            Text(title).lineLimit(1)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            Text(title)
+                .lineLimit(1)
+                .foregroundStyle(.primary)
         }
-        .font(.caption.weight(.medium))
-        .foregroundStyle(color)
-        .padding(.horizontal, 8)
+        .font(.system(size: 12, weight: .medium))
+        .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(color.opacity(0.1), in: Capsule())
+        .background(color.opacity(0.12), in: Capsule())
     }
 }
 
-struct QuietButtonStyle: ButtonStyle {
-    var prominent = false
-    @Environment(\.isEnabled) private var isEnabled
+struct SelectableButtonStyle: ButtonStyle {
+    var selected = false
+    var cornerRadius: CGFloat = 8
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.callout.weight(.medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .foregroundStyle(prominent ? Color.white : Color.primary)
-            .background(
-                prominent ? AppTheme.accent : Color.primary.opacity(0.06),
-                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-            )
-            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.42)
+        Surface(content: configuration.label, selected: selected,
+                pressed: configuration.isPressed, cornerRadius: cornerRadius)
+    }
+
+    private struct Surface<Content: View>: View {
+        let content: Content
+        let selected: Bool
+        let pressed: Bool
+        let cornerRadius: CGFloat
+        @State private var hovering = false
+        @Environment(\.isEnabled) private var isEnabled
+        @Environment(\.colorSchemeContrast) private var contrast
+
+        var body: some View {
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            content
+                .background(fill, in: shape)
+                .overlay {
+                    if selected && contrast == .increased {
+                        shape.strokeBorder(AppTheme.accent, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(shape)
+                .onHover { hovering = $0 }
+                .opacity(isEnabled ? 1 : 0.42)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+        }
+
+        private var fill: Color {
+            if selected {
+                return pressed ? AppTheme.accent.opacity(0.2) : AppTheme.accentSoft
+            }
+            if isEnabled && (hovering || pressed) {
+                return Color.primary.opacity(pressed ? 0.12 : 0.065)
+            }
+            return .clear
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 @testable import TrendingTabAggregation
 @testable import TrendingTabCore
 @testable import TrendingTabIntelligence
@@ -140,6 +141,74 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(ids.count, 17)
         XCTAssertTrue(ids.contains("wechat"))
         XCTAssertEqual(SourceCatalog.provider(id: "wechat")?.descriptor.availability, .requiresConfiguration)
+    }
+
+    func testExpiredSnapshotHidesNewsWithoutDiscardingConfiguration() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let tabID = UUID()
+        let profile = WidgetProfile(name: "默认", orderedTabIDs: [tabID], defaultTabID: tabID)
+        let row = SnapshotRow(id: "weibo:1", title: "新闻", sourceTitle: "微博", rank: 1, movement: nil,
+                              url: URL(string: "https://example.com/1"), eventID: nil, publishedAt: nil, score: 1)
+        let snapshot = WidgetSnapshot(generation: 1, generatedAt: now, profiles: [profile],
+                                      tabs: [SnapshotTab(id: tabID, title: "微博", kind: .sourceBoard,
+                                                         rows: [row], coverage: "", updatedAt: now)],
+                                      statuses: [], unreadCount: 0)
+        XCTAssertEqual(snapshot.removingExpiredRows(at: now.addingTimeInterval(60)).tabs.first?.rows.count, 1)
+        let expired = snapshot.removingExpiredRows(at: now.addingTimeInterval(1801))
+        XCTAssertEqual(expired.tabs.first?.rows.count, 0)
+        XCTAssertEqual(expired.profiles, [profile])
+        XCTAssertEqual(expired.tabs.first?.id, tabID)
+    }
+
+    func testWidgetLinkRoundTripsPreciseItemAndTab() throws {
+        let tabID = UUID()
+        let eventID = UUID()
+        let itemID = "weibo:中文 /?&=123"
+        let target = WidgetNavigationTarget(itemID: itemID, eventID: eventID, tabID: tabID)
+        XCTAssertEqual(WidgetNavigationTarget(url: target.url), target)
+        XCTAssertNil(WidgetNavigationTarget(url: URL(string: "https://example.com/item?item=1")!))
+        XCTAssertNil(WidgetNavigationTarget(url: URL(string: "trendingtab://item")!))
+        XCTAssertEqual(WidgetNavigationTarget(url: WidgetNavigationTarget().url), WidgetNavigationTarget())
+    }
+
+    func testCurrentBoardReplacesDroppedItemsAndObservations() throws {
+        let database = try AppDatabase(path: ":memory:")
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let old = NormalizedItem(sourceID: "weibo", boardID: "weibo.hot", nativeID: "old",
+                                 title: "已掉榜", url: URL(string: "https://example.com/old")!, rank: 1)
+        let current = NormalizedItem(sourceID: "weibo", boardID: "weibo.hot", nativeID: "current",
+                                     title: "当前热点", url: URL(string: "https://example.com/current")!, rank: 1)
+        try database.save(result: FetchResult(sourceID: "weibo", boardID: "weibo.hot", fetchedAt: now,
+                                             parserVersion: "test", items: [old]))
+        try database.save(result: FetchResult(sourceID: "weibo", boardID: "weibo.hot", fetchedAt: now.addingTimeInterval(60),
+                                             parserVersion: "test", items: [current]))
+        XCTAssertEqual(try database.recentItems(since: .distantPast).map(\.id), [current.id])
+        XCTAssertEqual(try database.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM observations") }, 1)
+        XCTAssertTrue(try database.recentItems(since: now.addingTimeInterval(120)).isEmpty)
+        try database.save(result: FetchResult(sourceID: "weibo", boardID: "weibo.hot", fetchedAt: now.addingTimeInterval(120),
+                                             parserVersion: "test", items: []))
+        XCTAssertTrue(try database.recentItems(since: .distantPast).isEmpty)
+    }
+
+    func testMixedBoardKeepsFreshRowsWhenOlderSourceExpires() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let items = ["old", "fresh"].enumerated().map { index, id in
+            let seen = index == 0 ? now.addingTimeInterval(-1740) : now
+            return StoredItem(item: NormalizedItem(sourceID: id, boardID: "\(id).hot", nativeID: id,
+                                                   title: id, url: URL(string: "https://example.com/\(id)")!, rank: 1),
+                              firstSeenAt: seen, lastSeenAt: seen, previousRank: nil, contentHash: id, historical: false)
+        }
+        let tab = TabDefinition(title: "聚合", kind: .aggregate, sort: .reciprocalRankFusion)
+        let snapshot = TabAggregator.snapshot(tabs: [tab], profiles: [], items: items, events: [], statuses: [],
+                                              sources: [], unread: 0, generation: 1, now: now)
+        XCTAssertEqual(snapshot.removingExpiredRows(at: now.addingTimeInterval(61)).tabs.first?.rows.map(\.id), ["fresh:fresh"])
+    }
+
+    func testDeletedSelectionFallsBackToConfiguredBoard() {
+        let first = UUID(), configured = UUID(), deleted = UUID()
+        XCTAssertEqual(WidgetSelection.resolvedTabID(available: [first, configured], preferred: [deleted, configured, first]), configured)
+        XCTAssertEqual(WidgetSelection.resolvedTabID(available: [first, configured], preferred: [configured, first]), configured)
+        XCTAssertNil(WidgetSelection.resolvedTabID(available: [], preferred: [configured]))
     }
 
     func testReleaseFeedSelectsNewerDMG() throws {

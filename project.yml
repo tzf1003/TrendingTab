@@ -27,6 +27,7 @@ targets:
     platform: macOS
     sources:
       - App
+      - Shared
     dependencies:
       - package: TrendingTabKit
         product: TrendingTabKit
@@ -40,19 +41,26 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
         PROVISIONING_PROFILE_SPECIFIER: "$(TRENDINGTAB_APP_PROFILE_ID)"
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.trendingtab.app
+            CFBundleURLSchemes: [trendingtab]
   TrendingTabWidget:
     type: app-extension
     platform: macOS
     sources:
       - Widget
+      - Shared
     dependencies:
       - package: TrendingTabKit
-        product: TrendingTabKit
+        product: TrendingTabCore
+      - package: TrendingTabKit
+        product: TrendingTabWidgetBridge
       - sdk: AppIntents.framework
-      - package: GRDB
-        product: GRDB
-      - package: SwiftSoup
-        product: SwiftSoup
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.trendingtab.app.widget

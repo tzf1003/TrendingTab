@@ -97,6 +97,13 @@ widget_info="$widget_bundle/Contents/Info.plist"
 test -d "$app"
 test -d "$widget_bundle"
 
+# Xcode adds the application and team identities required by App Intents.
+# Preserve the complete signed entitlements when signing the final bundles.
+signing_entitlements="$(mktemp -d "$output_dir/entitlements.XXXXXX")"
+trap 'rm -rf "$signing_entitlements"' EXIT
+codesign -d --entitlements :- "$app" > "$signing_entitlements/app.plist" 2>/dev/null
+codesign -d --entitlements :- "$widget_bundle" > "$signing_entitlements/widget.plist" 2>/dev/null
+
 # Keep the extension point in the generated Info.plist, then sign the final
 # nested code and the containing app in order.
 /usr/libexec/PlistBuddy -c 'Delete :NSExtension' "$widget_info" >/dev/null 2>&1 || true
@@ -161,14 +168,20 @@ sign_with_retry "$widget_bundle" \
   --options runtime \
   --sign "$sign_identity" \
   "${timestamp_args[@]}" \
-  --entitlements "$root/Widget/TrendingTabWidget.entitlements"
+  --entitlements "$signing_entitlements/widget.plist"
 sign_with_retry "$app" \
   --force \
   --options runtime \
   --sign "$sign_identity" \
   "${timestamp_args[@]}" \
-  --entitlements "$root/App/TrendingTab.entitlements"
+  --entitlements "$signing_entitlements/app.plist"
 codesign --verify --deep --strict --verbose=2 "$app"
+
+verification_args=("$app")
+if [[ "$signing_mode" == "developer-id" ]]; then
+  verification_args+=(--developer-id)
+fi
+python3 "$root/scripts/verify-bundle.py" "${verification_args[@]}"
 
 app_signature="$(codesign -d --entitlements :- "$app" 2>/dev/null)"
 widget_signature="$(codesign -d --entitlements :- "$widget_bundle" 2>/dev/null)"

@@ -17,25 +17,25 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .tabs: "标签"
+        case .tabs: "榜单标签"
         case .sources: "数据源"
-        case .refresh: "刷新"
-        case .ai: "AI"
+        case .refresh: "自动采集"
+        case .ai: "AI 分析"
         case .notifications: "通知"
         case .diagnostics: "诊断"
-        case .update: "更新"
+        case .update: "软件更新"
         }
     }
 
     var detail: String {
         switch self {
         case .tabs: "管理小组件和事件中心里的标签顺序与可见性。"
-        case .sources: "查看本地适配器、配置状态和分类。"
+        case .sources: "查看各类来源的可用状态，并配置微信公众号订阅。"
         case .refresh: "设置采集间隔和自动采集行为。"
         case .ai: "配置模型连接，以及分类、摘要和深入分析任务。"
         case .notifications: "控制提醒开关、静默时段和发送频率。"
         case .diagnostics: "查看每个来源最近一次采集状态。"
-        case .update: "检查 GitHub 最新版本并一键安装。"
+        case .update: "检查新版本、查看发行说明并安装更新。"
         }
     }
 
@@ -68,22 +68,23 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 208)
+                .frame(width: 176)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     pageHeader
                     sectionContent
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 34)
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 26)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
             }
+            .id(selection)
             .background(AppTheme.canvas)
         }
-        .frame(width: 920, height: 640)
+        .frame(minWidth: 800, idealWidth: 900, minHeight: 540, idealHeight: 640)
+        .tint(AppTheme.actionTint)
         .onAppear {
             interval = model.settings.refreshInterval / 60
             wechatURL = model.feeds.first(where: { $0.id == "wechat" })?.feedURL.absoluteString ?? ""
@@ -94,65 +95,56 @@ struct SettingsView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(AppTheme.accent)
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("TrendingTab").font(.headline)
-                    Text("设置").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 20)
-            .padding(.bottom, 6)
-
-            ForEach(SettingsSection.allCases) { section in
-                Button {
-                    selection = section
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: section.systemImage)
-                            .frame(width: 20)
-                        Text(section.title)
-                        Spacer()
-                    }
-                    .font(.callout.weight(selection == section ? .semibold : .regular))
-                    .foregroundStyle(selection == section ? AppTheme.accent : .primary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        selection == section ? AppTheme.accentSoft : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                }
-                .buttonStyle(.plain)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("设置")
+                .font(.system(size: 21, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
                 .padding(.horizontal, 8)
+
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(SettingsSection.allCases) { section in
+                    let selected = selection == section
+                    Button {
+                        selection = section
+                    } label: {
+                        Label {
+                            Text(section.title)
+                                .font(.system(size: 15, weight: selected ? .semibold : .regular))
+                                .foregroundStyle(.primary)
+                        } icon: {
+                            Image(systemName: section.systemImage)
+                                .foregroundStyle(selected ? AppTheme.accent : Color.secondary)
+                                .frame(width: 20)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                        .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(SelectableButtonStyle(selected: selected))
+                }
             }
 
             Spacer()
+
             Text("版本 \(model.currentVersion)")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 18)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 22)
         .background(AppTheme.sidebar)
     }
 
     private var pageHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(selection.title).font(.system(size: 28, weight: .bold, design: .rounded))
-            Text(selection.detail).foregroundStyle(.secondary)
+            Text(selection.title)
+                .font(.system(size: 29, weight: .bold))
+                .accessibilityAddTraits(.isHeader)
+            Text(selection.detail)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -201,8 +193,8 @@ struct SettingsView: View {
                                 return NSItemProvider(object: tab.id.uuidString as NSString)
                             }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(tab.title).font(.body.weight(.medium))
-                            Text(tab.kindTitle).font(.caption).foregroundStyle(.secondary)
+                            Text(tab.title).font(.system(size: 15, weight: .medium))
+                            Text(tab.kindTitle).font(.system(size: 12)).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Toggle("显示", isOn: Binding(
@@ -211,18 +203,21 @@ struct SettingsView: View {
                         ))
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                        .accessibilityLabel("显示 \(tab.title)")
                         Toggle("监测", isOn: Binding(
                             get: { tab.monitoringEnabled },
                             set: { model.setTabMonitoring(tab.id, enabled: $0) }
                         ))
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                        .accessibilityLabel("监测 \(tab.title)")
                         Toggle("提醒", isOn: Binding(
                             get: { tab.notification.enabled },
                             set: { model.setTabNotifications(tab.id, enabled: $0) }
                         ))
                         .toggleStyle(.switch)
                         .controlSize(.small)
+                        .accessibilityLabel("提醒 \(tab.title)")
                         Button {
                             model.moveTab(id: tab.id, direction: -1)
                         } label: {
@@ -230,6 +225,8 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(index == 0)
+                        .help("上移标签")
+                        .accessibilityLabel("上移 \(tab.title)")
                         Button {
                             model.moveTab(id: tab.id, direction: 1)
                         } label: {
@@ -237,6 +234,8 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(index == model.tabs.count - 1)
+                        .help("下移标签")
+                        .accessibilityLabel("下移 \(tab.title)")
                         Button(role: .destructive) {
                             model.removeTab(id: tab.id)
                         } label: {
@@ -245,9 +244,9 @@ struct SettingsView: View {
                         .buttonStyle(.borderless)
                         .disabled(model.tabs.count == 1)
                         .help("删除标签")
+                        .accessibilityLabel("删除 \(tab.title)")
                     }
                     .padding(.vertical, 6)
-                    .opacity(tab.hidden ? 0.62 : 1)
                     .onDrop(
                         of: [UTType.text],
                         delegate: TabDropDelegate(
@@ -257,7 +256,7 @@ struct SettingsView: View {
                         )
                     )
                     if index != model.tabs.count - 1 {
-                        Divider().opacity(0.45)
+                        Divider()
                     }
                 }
             }
@@ -270,8 +269,11 @@ struct SettingsView: View {
             CardSurface {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeading(title: "微信输入", detail: "填写公众号 RSS 或供应方热文接口")
-                    TextField("https://example.com/wechat.xml", text: $wechatURL)
-                        .textFieldStyle(.roundedBorder)
+                    LabeledContent("订阅地址") {
+                        TextField("https://example.com/wechat.xml", text: $wechatURL)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("订阅地址")
+                    }
                     HStack {
                         Text("凭据和订阅地址只保存在本机。")
                             .font(.caption)
@@ -281,7 +283,7 @@ struct SettingsView: View {
                             guard let url = URL(string: wechatURL) else { return }
                             model.updateWeChatFeed(url)
                         }
-                        .buttonStyle(QuietButtonStyle(prominent: true))
+                        .buttonStyle(.borderedProminent)
                     }
                 }
             }
@@ -339,7 +341,7 @@ struct SettingsView: View {
                         Button("应用") {
                             updateSettings { $0.refreshInterval = interval * 60 }
                         }
-                        .buttonStyle(QuietButtonStyle(prominent: true))
+                        .buttonStyle(.borderedProminent)
                     }
                     Text("小组件的实际刷新时间仍由 WidgetKit 调度；这里控制本地数据采集。")
                         .font(.caption)
@@ -356,7 +358,7 @@ struct SettingsView: View {
                     HStack {
                         SectionHeading(title: "自动分析", detail: "未启用时仍会正常采集和展示热点")
                         Spacer()
-                        Toggle("", isOn: Binding(
+                        Toggle("自动分析", isOn: Binding(
                             get: { model.settings.aiEnabled },
                             set: { value in updateSettings { $0.aiEnabled = value } }
                         ))
@@ -369,19 +371,31 @@ struct SettingsView: View {
             CardSurface {
                 VStack(alignment: .leading, spacing: 12) {
                     SectionHeading(title: "模型连接", detail: "API Key 保存在 macOS Keychain")
-                    TextField("连接名称", text: $connectionName)
-                        .textFieldStyle(.roundedBorder)
+                    LabeledContent("连接名称") {
+                        TextField("可选", text: $connectionName)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("连接名称")
+                    }
                     Picker("协议", selection: $protocolKind) {
                         ForEach(AIProtocolKind.allCases, id: \.self) { kind in
                             Text(kind.title).tag(kind)
                         }
                     }
-                    TextField("API 根地址", text: $baseURL)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("模型名称", text: $modelName)
-                        .textFieldStyle(.roundedBorder)
-                    SecureField("API Key", text: $credential)
-                        .textFieldStyle(.roundedBorder)
+                    LabeledContent("API 根地址") {
+                        TextField("https://api.openai.com/v1", text: $baseURL)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("API 根地址")
+                    }
+                    LabeledContent("模型名称") {
+                        TextField("模型 ID", text: $modelName)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("模型名称")
+                    }
+                    LabeledContent("API Key") {
+                        SecureField("输入 API Key", text: $credential)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("API Key")
+                    }
                     HStack {
                         Spacer()
                         Button("添加连接") {
@@ -399,7 +413,7 @@ struct SettingsView: View {
                             )
                             credential = ""
                         }
-                        .buttonStyle(QuietButtonStyle(prominent: true))
+                        .buttonStyle(.borderedProminent)
                     }
                 }
             }
@@ -423,7 +437,7 @@ struct SettingsView: View {
                 HStack {
                     SectionHeading(title: "系统提醒", detail: "事件中心始终保留内容，通知可单独关闭")
                     Spacer()
-                    Toggle("", isOn: Binding(
+                    Toggle("系统提醒", isOn: Binding(
                         get: { model.settings.globalNotification.enabled },
                         set: { value in updateSettings { $0.globalNotification.enabled = value } }
                     ))
@@ -479,7 +493,7 @@ struct SettingsView: View {
                                 Text(record.title).font(.body.weight(.medium))
                                 Text(record.message).font(.caption).foregroundStyle(.secondary)
                                 if let success = record.lastSuccessAt {
-                                    Text(success.trendingRelativeText).font(.caption2).foregroundStyle(.tertiary)
+                                    Text(success.trendingRelativeText).font(.system(size: 12)).foregroundStyle(.secondary)
                                 }
                             }
                             Spacer()
@@ -500,9 +514,9 @@ struct SettingsView: View {
                         Text(model.updateState).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Image(systemName: model.availableRelease == nil ? "checkmark.seal.fill" : "arrow.down.circle.fill")
+                    Image(systemName: model.availableRelease == nil ? "shippingbox" : "arrow.down.circle")
                         .font(.system(size: 28))
-                        .foregroundStyle(model.availableRelease == nil ? Color.green : AppTheme.accent)
+                        .foregroundStyle(model.availableRelease == nil ? Color.secondary : AppTheme.accent)
                 }
 
                 if let release = model.availableRelease {
@@ -517,7 +531,7 @@ struct SettingsView: View {
                     Button("检查更新") {
                         Task { await model.checkForUpdate() }
                     }
-                    .buttonStyle(QuietButtonStyle())
+                    .buttonStyle(.bordered)
                     Button("一键更新") {
                         Task {
                             if await model.installAvailableUpdate() {
@@ -525,7 +539,7 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .buttonStyle(QuietButtonStyle(prominent: true))
+                    .buttonStyle(.borderedProminent)
                     .disabled(model.availableRelease == nil)
                     Spacer()
                 }

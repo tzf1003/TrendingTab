@@ -8,20 +8,22 @@ TrendingTab 是一个 macOS 14+ 的热榜聚合应用。桌面小组件负责快
 - 平台榜单、聚合、重大事件、主题和事件追踪使用同一级标签，可排序、隐藏和独立订阅提醒。
 - 默认每 15 分钟采集，可设置为 5 至 1440 分钟。
 - 首版接入 17 个来源，每个来源使用独立适配器。
-- 小、中、大三种 Widget 复用完整卡片空间；中、大尺寸使用双列，并从标题起始展示每一条内容。
+- 三种 Widget 使用紧凑单行标题，长标题以省略号结尾。常规尺寸下小型显示 5 条，中型两列共 8 条，大型一列约 10 条。
+- 右键编辑组件可选择默认榜单、固定榜单与「独立配置」槽。多个可切换组件使用不同配置槽即可分别浏览；相同榜单及配置槽共享选择。
 - 设置页自动读取 GitHub 最新 Release，发现新版本后可下载并一键安装。
 - 支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。
+- 事件中心右侧提供独立 AI 对话栏，支持流式回答、连续追问、停止和重试，每条新闻保留本次运行中的会话。
 - 支持连接符合 `/v1/sources` 契约的自建数据服务。
 
 ## 开发
 
 ```sh
-swift test --build-path /Volumes/TrendingTabBuild/swift --cache-path /Volumes/TrendingTabBuild/cache
-xcodebuild -project TrendingTab.xcodeproj -scheme TrendingTab -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
-SIGNING_MODE=ad-hoc zsh scripts/package-dmg.sh
+rtk swift test --scratch-path /Volumes/TrendingTabBuild/swift
+rtk xcodebuild -project TrendingTab.xcodeproj -scheme TrendingTab -destination 'platform=macOS' -derivedDataPath /Volumes/TrendingTabBuild/DerivedData CODE_SIGNING_ALLOWED=NO build
+rtk env SIGNING_MODE=ad-hoc zsh scripts/package-dmg.sh
 ```
 
-外接 APFS 构建卷可用时优先使用上述缓存路径；未挂载时省略两个路径参数。打包脚本默认使用 `SIGNING_MODE=auto`：证书和两份 provisioning profile 都可用时才选择 Developer ID，否则生成 ad-hoc 签名的 DMG。
+外接 APFS 构建卷可用时优先使用上述缓存路径；未挂载时省略路径参数。打包脚本默认使用 `SIGNING_MODE=auto`：证书和两份 provisioning profile 都可用时选择 Developer ID，否则生成 ad-hoc 签名的 DMG。
 
 `main` 分支的 CI 会运行测试、构建同时支持 Apple Silicon 与 Intel 的 DMG，把 DMG 和 SHA-256 作为 Actions Artifact 保存，并发布到 GitHub Release。完整签名和公证配置见 [发布与签名](docs/release.md)。
 

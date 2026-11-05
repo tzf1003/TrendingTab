@@ -148,6 +148,10 @@ public struct WidgetSelection: Codable, Equatable, Sendable {
         self.page = page
         self.generation = generation
     }
+
+    public static func resolvedTabID(available: [UUID], preferred: [UUID?]) -> UUID? {
+        preferred.compactMap { $0 }.first(where: available.contains) ?? available.first
+    }
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
@@ -268,8 +272,9 @@ public struct SnapshotRow: Codable, Equatable, Sendable, Identifiable {
     public var eventID: UUID?
     public var publishedAt: Date?
     public var score: Double
+    public var expiresAt: Date?
 
-    public init(id: String, title: String, sourceTitle: String, rank: Int?, movement: String?, url: URL?, eventID: UUID?, publishedAt: Date?, score: Double) {
+    public init(id: String, title: String, sourceTitle: String, rank: Int?, movement: String?, url: URL?, eventID: UUID?, publishedAt: Date?, score: Double, expiresAt: Date? = nil) {
         self.id = id
         self.title = title
         self.sourceTitle = sourceTitle
@@ -279,6 +284,7 @@ public struct SnapshotRow: Codable, Equatable, Sendable, Identifiable {
         self.eventID = eventID
         self.publishedAt = publishedAt
         self.score = score
+        self.expiresAt = expiresAt
     }
 }
 
@@ -289,14 +295,16 @@ public struct SnapshotTab: Codable, Equatable, Sendable, Identifiable {
     public var rows: [SnapshotRow]
     public var coverage: String
     public var updatedAt: Date?
+    public var expiresAt: Date?
 
-    public init(id: UUID, title: String, kind: TabKind, rows: [SnapshotRow], coverage: String, updatedAt: Date?) {
+    public init(id: UUID, title: String, kind: TabKind, rows: [SnapshotRow], coverage: String, updatedAt: Date?, expiresAt: Date? = nil) {
         self.id = id
         self.title = title
         self.kind = kind
         self.rows = rows
         self.coverage = coverage
         self.updatedAt = updatedAt
+        self.expiresAt = expiresAt
     }
 }
 
@@ -318,6 +326,18 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
         self.tabs = tabs
         self.statuses = statuses
         self.unreadCount = unreadCount
+    }
+
+    public func removingExpiredRows(at now: Date = .now) -> WidgetSnapshot {
+        var copy = self
+        copy.tabs = tabs.map { tab in
+            let fallback = tab.expiresAt ?? (tab.updatedAt ?? generatedAt).addingTimeInterval(30 * 60)
+            var fresh = tab
+            fresh.rows = tab.rows.filter { now < ($0.expiresAt ?? fallback) }
+            if !tab.rows.isEmpty && fresh.rows.isEmpty { fresh.coverage = "等待最新榜单" }
+            return fresh
+        }
+        return copy
     }
 }
 

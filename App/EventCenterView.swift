@@ -1,49 +1,59 @@
 import SwiftUI
 import TrendingTabCore
 import TrendingTabKit
+import TrendingTabSources
 
 struct EventCenterView: View {
     @ObservedObject var model: TrendingAppModel
     @State private var selectedTabID: SnapshotTab.ID?
     @State private var selectedRowID: SnapshotRow.ID?
+    @State private var dismissedRevealToken: Int?
+    @State private var presentedRevealToken: Int?
+    @State private var unresolvedReveal = false
+    @State private var revealRevision = 0
+    @State private var showsChat = true
+    @State private var chatDrafts: [SnapshotRow.ID: String] = [:]
 
     var body: some View {
         HSplitView {
             sidebar
-                .frame(minWidth: 300, idealWidth: 350, maxWidth: 410, maxHeight: .infinity)
+                .frame(minWidth: 276, idealWidth: 318, maxWidth: 410, maxHeight: .infinity)
 
-            detail
-                .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
+            reader
+                .frame(minWidth: 440, maxWidth: .infinity, maxHeight: .infinity)
+
+            if showsChat {
+                AnalysisConversationView(
+                    chat: model.analysisChat,
+                    row: displayedRow,
+                    draft: chatDraft(for: displayedRow?.id),
+                    hasConnection: hasAnalysisConnection,
+                    send: { text, id in model.sendChatMessage(text, itemID: id) },
+                    retry: { id in model.retryChat(itemID: id) },
+                    close: { showsChat = false }
+                )
+                .frame(minWidth: 340, idealWidth: 356, maxWidth: 400, maxHeight: .infinity)
+            }
         }
         .background(AppTheme.canvas)
-        .frame(minWidth: 900, minHeight: 580)
-        .onAppear {
-            revealRequestedRow()
-            normalizeSelection()
-        }
-        .onChange(of: model.pendingEventToken) { _, _ in revealRequestedRow() }
-        .onChange(of: model.snapshot?.generation) { _, _ in normalizeSelection() }
+        .frame(minWidth: 1100, minHeight: 580)
+        .tint(AppTheme.actionTint)
+        .onChange(of: model.pendingEventToken, initial: true) { _, _ in reconcileSelection() }
+        .onChange(of: model.snapshot) { _, _ in reconcileSelection() }
+        .onChange(of: model.tabs) { _, _ in reconcileSelection() }
     }
 
     private var tabs: [SnapshotTab] {
-        guard let snapshot = model.snapshot ?? fallbackSnapshot else { return [] }
+        guard let snapshot = model.snapshot else {
+            return model.tabs.filter { !$0.hidden }.map {
+                SnapshotTab(id: $0.id, title: $0.title, kind: $0.kind,
+                            rows: [], coverage: "等待首次采集", updatedAt: nil)
+            }
+        }
         guard let profile = snapshot.profiles.first else { return snapshot.tabs }
         let ordered = profile.orderedTabIDs.compactMap { id in snapshot.tabs.first { $0.id == id } }
-        return ordered.isEmpty ? snapshot.tabs : ordered
-    }
-
-    private var fallbackSnapshot: WidgetSnapshot? {
-        guard !model.tabs.isEmpty else { return nil }
-        return WidgetSnapshot(
-            generation: 0,
-            generatedAt: .now,
-            profiles: model.profiles,
-            tabs: model.tabs.filter { !$0.hidden }.map {
-                SnapshotTab(id: $0.id, title: $0.title, kind: $0.kind, rows: [], coverage: "等待首次采集", updatedAt: nil)
-            },
-            statuses: [],
-            unreadCount: 0
-        )
+        let orderedIDs = Set(ordered.map(\.id))
+        return ordered + snapshot.tabs.filter { !orderedIDs.contains($0.id) }
     }
 
     private var currentTab: SnapshotTab? {
@@ -51,475 +61,811 @@ struct EventCenterView: View {
     }
 
     private var sortedRows: [SnapshotRow] {
-        (currentTab?.rows ?? []).sorted(by: heatOrder)
-    }
-
-    private var currentRow: SnapshotRow? {
-        sortedRows.first { $0.id == selectedRowID } ?? sortedRows.first
-    }
-
-    private var currentItem: StoredItem? {
-        guard let currentRow else { return nil }
-        return model.items.first { $0.id == currentRow.id }
-    }
-
-    private var currentEvent: EventCluster? {
-        guard let currentRow else { return nil }
-        if let eventID = currentRow.eventID, let event = model.events.first(where: { $0.id == eventID }) {
-            return event
+        guard let tab = currentTab else { return [] }
+        let sortsByRank = tab.kind == .sourceBoard
+        return tab.rows.sorted { lhs, rhs in
+            let leftRank = lhs.rank ?? Int.max
+            let rightRank = rhs.rank ?? Int.max
+            if sortsByRank && leftRank != rightRank { return leftRank < rightRank }
+            return lhs.score > rhs.score
         }
-        return model.events.first { $0.itemIDs.contains(currentRow.id) }
     }
 
-    private var currentReports: [StoredItem] {
-        if let event = currentEvent {
-            return model.items.filter { event.itemIDs.contains($0.id) }
+    private var displayedRow: SnapshotRow? {
+        guard !waitingForReveal else { return nil }
+        return sortedRows.first { $0.id == selectedRowID } ?? sortedRows.first
+    }
+
+    private var waitingForReveal: Bool {
+        if unresolvedReveal { return true }
+        let token = model.pendingEventToken
+        guard dismissedRevealToken != token,
+              model.requestedItemID != nil || model.requestedEventID != nil || model.requestedTabID != nil else {
+            return false
         }
-        return currentItem.map { [$0] } ?? []
+        if presentedRevealToken != token { return true }
+        if let itemID = model.requestedItemID {
+            return !sortedRows.contains { $0.id == itemID }
+        }
+        return false
+    }
+
+    private var hasAnalysisConnection: Bool {
+        guard let id = model.assignment.analysis else { return false }
+        return model.connections.contains { $0.id == id }
     }
 
     private var sidebar: some View {
-        VStack(spacing: 0) {
-            brandHeader
-            Divider().opacity(0.55)
+        VStack(alignment: .leading, spacing: 0) {
+            sidebarHeader
             tabPager
-            Divider().opacity(0.4)
+            Divider()
             feedList
-            Divider().opacity(0.4)
+                .id(currentTab?.id)
+            Divider()
             sidebarFooter
         }
         .background(AppTheme.sidebar)
     }
 
-    private var brandHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(AppTheme.accent)
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 32, height: 32)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("TrendingTab").font(.headline)
-                    Text("实时热点，只保留当下").font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    Task { await model.refresh(manual: true) }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 13, weight: .semibold))
+    private var sidebarHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(AppTheme.accent)
+                .accessibilityHidden(true)
+            Text("事件中心")
+                .font(.system(size: 23, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            Spacer()
+            if model.running {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("正在刷新")
+            } else {
+                Button(action: refresh) {
+                    Label("立即刷新", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
                         .frame(width: 30, height: 30)
-                        .background(Color.primary.opacity(0.06), in: Circle())
                 }
-                .buttonStyle(.plain)
-                .disabled(model.running)
+                .buttonStyle(SelectableButtonStyle())
                 .help("立即刷新")
             }
-
-            HStack(spacing: 8) {
-                StatusPill(
-                    title: model.running ? "正在刷新" : "当前榜单",
-                    color: model.running ? .orange : .green
-                )
-                if let generatedAt = model.snapshot?.generatedAt ?? currentTab?.updatedAt {
-                    Text(generatedAt.trendingRelativeText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 16)
+        .padding(.top, 15)
+        .padding(.bottom, 8)
     }
 
     private var tabPager: some View {
         HStack(spacing: 4) {
-            pagerButton(systemName: "chevron.left", direction: -1)
-                .disabled(tabs.count < 2)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(tabs) { tab in
-                        Button {
-                            selectedTabID = tab.id
-                            selectedRowID = nil
-                            normalizeSelection()
-                        } label: {
-                            Text(tab.title)
-                                .font(.system(size: 14.5, weight: .medium))
-                                .lineLimit(1)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .foregroundStyle(tab.id == currentTab?.id ? AppTheme.accent : .primary)
-                                .background(
-                                    tab.id == currentTab?.id ? AppTheme.accentSoft : Color.primary.opacity(0.055),
-                                    in: Capsule()
-                                )
+            pagerButton("上一个榜单", icon: "chevron.left", direction: -1)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 4) {
+                        ForEach(tabs) { tab in
+                            let selected = currentTab?.id == tab.id
+                            Button {
+                                selectTab(tab.id)
+                            } label: {
+                                Text(tab.title)
+                                    .font(.system(size: 14, weight: selected ? .semibold : .medium))
+                                    .lineLimit(1)
+                                    .foregroundStyle(selected ? AppTheme.accent : Color.primary)
+                                    .padding(.horizontal, 10)
+                                    .frame(minHeight: 32)
+                            }
+                            .buttonStyle(SelectableButtonStyle(selected: selected))
+                            .id(tab.id)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 1)
+                .scrollIndicators(.hidden)
+                .onChange(of: currentTab?.id, initial: true) { _, id in
+                    if let id { proxy.scrollTo(id, anchor: .center) }
+                }
+                .onChange(of: tabs.map(\.id)) { _, _ in
+                    if let id = currentTab?.id { proxy.scrollTo(id, anchor: .center) }
+                }
             }
-
-            pagerButton(systemName: "chevron.right", direction: 1)
-                .disabled(tabs.count < 2)
+            pagerButton("下一个榜单", icon: "chevron.right", direction: 1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("榜单标签")
     }
 
     private var feedList: some View {
-        ScrollView {
-            LazyVStack(spacing: 6) {
-                if sortedRows.isEmpty {
-                    sidebarEmptyState
+        let rows = sortedRows
+        let selection = displayedRow?.id
+        let showsRank = currentTab?.kind == .sourceBoard
+        return ScrollViewReader { proxy in
+            ScrollView {
+                if rows.isEmpty {
+                    feedEmptyState
                 } else {
-                    ForEach(sortedRows) { row in
-                        feedRow(row)
+                    LazyVStack(spacing: 2) {
+                        ForEach(rows) { row in
+                            feedRow(row, selected: row.id == selection, showsRank: showsRank)
+                                .id(row.id)
+                        }
                     }
+                    .padding(8)
                 }
             }
-            .padding(10)
+            .onChange(of: selection, initial: true) { _, id in
+                if let id { proxy.scrollTo(id) }
+            }
+            .onChange(of: revealRevision) { _, _ in
+                if let selection { proxy.scrollTo(selection) }
+            }
         }
     }
 
     private var sidebarFooter: some View {
-        HStack {
-            Text("\(sortedRows.count) 条")
-            Spacer()
-            Text("仅显示当前榜单")
+        HStack(spacing: 6) {
+            Text("\(sortedRows.count) 条热点")
+                .monospacedDigit()
+            Spacer(minLength: 4)
+            if model.running {
+                Text("正在刷新")
+            } else if let date = currentTab?.updatedAt {
+                UpdateTimeLabel(date: date)
+            }
         }
-        .font(.caption)
+        .font(.system(size: 12))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .lineLimit(1)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
     }
 
-    private var sidebarEmptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "wind")
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(.tertiary)
-            Text(model.running ? "正在获取当前榜单" : "当前没有可显示的热点")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if !model.running {
-                Button("立即刷新") {
-                    Task { await model.refresh(manual: true) }
-                }
-                .buttonStyle(QuietButtonStyle())
+    private var feedEmptyState: some View {
+        ContentUnavailableView {
+            Label(
+                model.running ? "正在获取榜单" : "当前没有热点",
+                systemImage: model.running ? "arrow.triangle.2.circlepath" : "list.number"
+            )
+        } description: {
+            if let tab = currentTab, tab.coverage != "已覆盖当前材料" {
+                Text(tab.coverage)
+            } else if currentTab == nil {
+                Text("可在设置中显示或添加榜单。")
+            }
+        } actions: {
+            if currentTab != nil && !model.running {
+                Button("立即刷新", action: refresh)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 72)
+        .padding(.top, 24)
     }
 
-    private func feedRow(_ row: SnapshotRow) -> some View {
-        let selected = row.id == currentRow?.id
-        return Button {
+    private func feedRow(_ row: SnapshotRow, selected: Bool, showsRank: Bool) -> some View {
+        Button {
+            dismissReveal()
             selectedRowID = row.id
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Capsule()
-                    .fill(selected ? AppTheme.accent : Color.clear)
-                    .frame(width: 3)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(row.title)
-                        .font(.system(size: 14.5, weight: selected ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-
-                    HStack(spacing: 7) {
-                        Text(updateDate(for: row).trendingRelativeText)
-                        if let movement = row.movement, !movement.isEmpty {
-                            Text(movement)
-                                .foregroundStyle(movement.hasPrefix("↓") ? Color.secondary : AppTheme.accent)
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .top, spacing: 8) {
+                if showsRank, let rank = row.rank {
+                    Text("\(rank)")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle((1...3).contains(rank) ? AppTheme.accent : Color.secondary)
+                        .frame(minWidth: 24, alignment: .trailing)
+                        .padding(.top, 2)
+                        .accessibilityLabel("榜位 \(rank)")
                 }
 
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(selected ? AppTheme.accent : Color.secondary.opacity(0.4))
-                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.title)
+                        .font(.system(size: 16, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    UpdateTimeLabel(date: updateDate(for: row))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if selected {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppTheme.accent)
+                        .padding(.top, 5)
+                        .accessibilityHidden(true)
+                }
             }
+            .padding(.horizontal, 9)
             .padding(.vertical, 9)
-            .padding(.leading, 8)
-            .padding(.trailing, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? AppTheme.accentSoft : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SelectableButtonStyle(selected: selected))
+        .help(row.title)
+    }
+
+    private var reader: some View {
+        VStack(spacing: 0) {
+            if !showsChat {
+                HStack {
+                    Spacer()
+                    Button {
+                        showsChat = true
+                    } label: {
+                        Label("显示 AI 对话", systemImage: "sidebar.right")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+            }
+            readerContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(AppTheme.canvas)
     }
 
     @ViewBuilder
-    private var detail: some View {
-        if let row = currentRow {
+    private var readerContent: some View {
+        if let row = displayedRow {
+            let item = model.items.first { $0.id == row.id }
+            let event = event(for: row)
             StoryDetailView(
                 row: row,
-                tab: currentTab,
-                item: currentItem,
-                event: currentEvent,
-                reports: currentReports,
+                tabTitle: currentTab?.title,
+                item: item,
+                event: event,
+                reports: reports(for: row, event: event),
+                sourceNames: sourceNames,
                 updateDate: updateDate(for: row),
-                analysis: currentEvent?.id == model.analysisEventID ? model.analysisText : "",
-                analyze: {
-                    guard let event = currentEvent else { return }
-                    Task { await model.analyzeEvent(event) }
-                }
+                openAnalysis: { openAnalysis(for: row.id) }
             )
+            .id(StoryIdentity(tabID: currentTab?.id, rowID: row.id, revealRevision: revealRevision))
+        } else if waitingForReveal {
+            if model.snapshot == nil {
+                ContentUnavailableView(
+                    "正在等待榜单",
+                    systemImage: "clock",
+                    description: Text("榜单就绪后会定位链接中的热点。")
+                )
+            } else {
+                ContentUnavailableView(
+                    "链接中的热点已掉榜",
+                    systemImage: "link",
+                    description: Text("可从左侧选择当前榜单中的热点。")
+                )
+            }
         } else {
             ContentUnavailableView(
-                "选择一条热点",
-                systemImage: "rectangle.stack",
-                description: Text("左侧只展示当前榜单；内容掉榜后会立即消失。")
+                "还没有选中的热点",
+                systemImage: "newspaper",
+                description: Text("从左侧选择榜单和热点，查看来源、摘要与原文。")
             )
         }
     }
 
-    private func pagerButton(systemName: String, direction: Int) -> some View {
+    private func pagerButton(_ title: String, icon: String, direction: Int) -> some View {
         Button {
-            moveTab(direction)
+            let available = tabs
+            guard let index = available.firstIndex(where: { $0.id == currentTab?.id }),
+                  available.count > 1 else { return }
+            selectTab(available[(index + direction + available.count) % available.count].id)
         } label: {
-            Image(systemName: systemName)
-                .font(.caption.weight(.bold))
-                .frame(width: 24, height: 28)
-                .contentShape(Rectangle())
+            Label(title, systemImage: icon)
+                .labelStyle(.iconOnly)
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 26, height: 32)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .buttonStyle(SelectableButtonStyle())
+        .disabled(tabs.count < 2)
+        .help(title)
     }
 
-    private func moveTab(_ direction: Int) {
-        guard !tabs.isEmpty else { return }
-        let currentIndex = tabs.firstIndex { $0.id == currentTab?.id } ?? 0
-        let nextIndex = (currentIndex + direction + tabs.count) % tabs.count
-        selectedTabID = tabs[nextIndex].id
-        selectedRowID = nil
+    private func refresh() {
+        Task { await model.refresh(manual: true) }
+    }
+
+    private func selectTab(_ id: SnapshotTab.ID) {
+        let changedTab = id != currentTab?.id
+        dismissReveal()
+        selectedTabID = id
+        if changedTab { selectedRowID = nil }
         normalizeSelection()
     }
 
-    private func heatOrder(_ lhs: SnapshotRow, _ rhs: SnapshotRow) -> Bool {
-        let leftRank = lhs.rank ?? Int.max
-        let rightRank = rhs.rank ?? Int.max
-        if leftRank != rightRank { return leftRank < rightRank }
-        return lhs.score > rhs.score
-    }
-
-    private func updateDate(for row: SnapshotRow) -> Date {
-        model.items.first(where: { $0.id == row.id })?.lastSeenAt
-            ?? row.publishedAt
-            ?? currentTab?.updatedAt
-            ?? model.snapshot?.generatedAt
-            ?? .now
-    }
-
     private func normalizeSelection() {
-        if !tabs.contains(where: { $0.id == selectedTabID }) {
-            selectedTabID = tabs.first?.id
-        }
+        selectedTabID = currentTab?.id
         if !sortedRows.contains(where: { $0.id == selectedRowID }) {
             selectedRowID = sortedRows.first?.id
         }
     }
 
+    private func reconcileSelection() {
+        if dismissedRevealToken != model.pendingEventToken {
+            revealRequestedRow()
+        }
+        if !unresolvedReveal { normalizeSelection() }
+    }
+
     private func revealRequestedRow() {
-        if let itemID = model.requestedItemID {
-            for tab in tabs {
-                if tab.rows.contains(where: { $0.id == itemID }) {
-                    selectedTabID = tab.id
-                    selectedRowID = itemID
+        let preferredID = model.requestedTabID
+        let itemID = model.requestedItemID
+        let eventID = model.requestedEventID
+        guard itemID != nil || eventID != nil || preferredID != nil else {
+            dismissReveal()
+            return
+        }
+
+        let available = tabs
+        let preferredTab = available.first { $0.id == preferredID }
+        let searchOrder = preferredTab.map { preferred in
+            [preferred] + available.filter { $0.id != preferred.id }
+        } ?? available
+
+        if let itemID {
+            if let tab = searchOrder.first(where: { $0.rows.contains { $0.id == itemID } }) {
+                reveal(tabID: tab.id, rowID: itemID)
+                return
+            }
+        } else if let eventID {
+            let related = Set(model.events.first { $0.id == eventID }?.itemIDs ?? [])
+            for tab in searchOrder {
+                if let row = tab.rows.first(where: { $0.eventID == eventID })
+                    ?? tab.rows.first(where: { related.contains($0.id) }) {
+                    reveal(tabID: tab.id, rowID: row.id)
                     return
                 }
             }
+        } else if let preferredTab {
+            reveal(tabID: preferredTab.id, rowID: nil)
+            return
         }
 
-        if let eventID = model.requestedEventID {
-            let relatedItemIDs = Set(model.events.first { $0.id == eventID }?.itemIDs ?? [])
-            for tab in tabs {
-                if let row = tab.rows.first(where: { $0.eventID == eventID || relatedItemIDs.contains($0.id) }) {
-                    selectedTabID = tab.id
-                    selectedRowID = row.id
-                    return
-                }
-            }
-        }
+        if let preferredTab { selectedTabID = preferredTab.id }
+        unresolvedReveal = true
+    }
 
-        normalizeSelection()
+    private func reveal(tabID: SnapshotTab.ID, rowID: SnapshotRow.ID?) {
+        let isNewRequest = presentedRevealToken != model.pendingEventToken
+        let changedTab = selectedTabID != tabID
+        if isNewRequest || changedTab || (rowID != nil && selectedRowID != rowID) || unresolvedReveal {
+            revealRevision += 1
+        }
+        presentedRevealToken = model.pendingEventToken
+        selectedTabID = tabID
+        if rowID != nil || isNewRequest || changedTab { selectedRowID = rowID }
+        unresolvedReveal = false
+    }
+
+    private func dismissReveal() {
+        dismissedRevealToken = model.pendingEventToken
+        unresolvedReveal = false
+    }
+
+    private func event(for row: SnapshotRow) -> EventCluster? {
+        if let eventID = row.eventID, let event = model.events.first(where: { $0.id == eventID }) {
+            return event
+        }
+        return model.events.first { $0.itemIDs.contains(row.id) }
+    }
+
+    private func reports(for row: SnapshotRow, event: EventCluster?) -> [StoredItem] {
+        let ids = Set(event?.itemIDs ?? []).union([row.id])
+        return model.items.filter { ids.contains($0.id) }.sorted { lhs, rhs in
+            if lhs.id == row.id { return rhs.id != row.id }
+            if rhs.id == row.id { return false }
+            return lhs.lastSeenAt > rhs.lastSeenAt
+        }
+    }
+
+    private var sourceNames: [String: String] {
+        Dictionary(
+            SourceCatalog.providers(customFeeds: model.feeds).map { ($0.descriptor.id, $0.descriptor.title) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    private func updateDate(for row: SnapshotRow) -> Date? {
+        model.items.first { $0.id == row.id }?.lastSeenAt
+            ?? currentTab?.updatedAt
+            ?? model.snapshot?.generatedAt
+    }
+
+    private func chatDraft(for itemID: SnapshotRow.ID?) -> Binding<String> {
+        guard let itemID else { return .constant("") }
+        return Binding(
+            get: { chatDrafts[itemID, default: ""] },
+            set: { chatDrafts[itemID] = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    private func openAnalysis(for itemID: SnapshotRow.ID) {
+        showsChat = true
+        let session = model.analysisChat.session(for: itemID)
+        guard hasAnalysisConnection, session.messages.isEmpty, !session.isStreaming, session.error == nil else { return }
+        model.sendChatMessage(AnalysisConversationView.initialPrompt, itemID: itemID)
+    }
+}
+
+private struct StoryIdentity: Hashable {
+    let tabID: SnapshotTab.ID?
+    let rowID: SnapshotRow.ID
+    let revealRevision: Int
+}
+
+private struct UpdateTimeLabel: View {
+    let date: Date?
+
+    var body: some View {
+        if let date {
+            Text("更新于 \(date.formatted(.dateTime.month().day().hour().minute()))")
+        } else {
+            Text("更新时间未知")
+        }
     }
 }
 
 private struct StoryDetailView: View {
-    var row: SnapshotRow
-    var tab: SnapshotTab?
-    var item: StoredItem?
-    var event: EventCluster?
-    var reports: [StoredItem]
-    var updateDate: Date
-    var analysis: String
-    var analyze: () -> Void
+    let row: SnapshotRow
+    let tabTitle: String?
+    let item: StoredItem?
+    let event: EventCluster?
+    let reports: [StoredItem]
+    let sourceNames: [String: String]
+    let updateDate: Date?
+    let openAnalysis: () -> Void
+
+    private var originalURL: URL? { row.url ?? item?.item.url }
+    private var sourceSummary: String? { nonEmpty(item?.item.summary) }
+    private var eventSummary: String? { nonEmpty(event?.summary) }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 24) {
                 header
-                summarySection
-                reportsSection
-                analysisSection
+                Divider()
+                article
+                if let eventSummary, eventSummary != sourceSummary {
+                    Divider()
+                    readingSection("事件摘要", text: eventSummary)
+                }
+                if reports.contains(where: { $0.id != row.id }) {
+                    Divider()
+                    relatedReports
+                }
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 30)
-            .padding(.bottom, 34)
-            .frame(maxWidth: 900, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.horizontal, 26)
+            .padding(.top, 24)
+            .padding(.bottom, 32)
+            .frame(maxWidth: 790, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
-        .background(AppTheme.canvas)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 8) {
-                StatusPill(title: tab?.title ?? row.sourceTitle, color: AppTheme.accent)
-                Text(updateDate.trendingRelativeText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if let url = row.url {
-                    Link(destination: url) {
-                        Label("打开原文", systemImage: "arrow.up.right")
-                    }
-                    .buttonStyle(QuietButtonStyle())
+                if let tabTitle {
+                    Text(tabTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppTheme.accent)
+                        .lineLimit(1)
+                }
+                if let event, event.status == "major", tabTitle != "重大事件" {
+                    StatusPill(title: "重大事件")
                 }
             }
 
             Text(row.title)
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .font(.system(size: 31, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
+                .accessibilityAddTraits(.isHeader)
 
-            HStack(spacing: 14) {
-                Label(row.sourceTitle, systemImage: "newspaper")
-                if let rank = row.rank {
-                    Label("榜位 \(rank)", systemImage: "flame")
-                }
-                if let publishedAt = row.publishedAt {
-                    Label(publishedAt.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { metadata }.fixedSize()
+                VStack(alignment: .leading, spacing: 6) { metadata }
             }
-            .font(.callout)
+            .font(.system(size: 13))
             .foregroundStyle(.secondary)
-        }
-    }
 
-    private var summarySection: some View {
-        CardSurface {
-            VStack(alignment: .leading, spacing: 11) {
-                HStack {
-                    SectionHeading(
-                        title: event?.summary == nil ? "事件摘要" : "AI 事件摘要",
-                        detail: event?.summary == nil ? "尚未完成自动分析" : "根据当前可用的标题与摘要生成"
-                    )
-                    Spacer()
-                    if let event {
-                        StatusPill(
-                            title: statusTitle(event.status),
-                            color: event.status == "major" ? AppTheme.accent : .secondary,
-                            systemImage: event.status == "major" ? "sparkles" : nil
-                        )
+            HStack(spacing: 8) {
+                if let originalURL {
+                    Link(destination: originalURL) {
+                        Label("打开原文", systemImage: "arrow.up.right")
                     }
+                    .buttonStyle(.borderedProminent)
                 }
-
-                let hasSummary = event?.summary != nil || item?.item.summary != nil
-                Text(event?.summary ?? item?.item.summary ?? "这条热点还没有生成摘要。打开原文，或在配置 AI 后执行深入分析。")
-                    .font(.body)
-                    .foregroundStyle(hasSummary ? Color.primary : Color.secondary)
-                    .textSelection(.enabled)
-
-                if let category = event?.category, !category.isEmpty {
-                    Label(category, systemImage: "tag")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                Button(action: openAnalysis) {
+                    Label("深入分析", systemImage: "sparkles")
                 }
+                .buttonStyle(.bordered)
             }
-        }
-    }
-
-    private var reportsSection: some View {
-        CardSurface {
-            VStack(alignment: .leading, spacing: 13) {
-                SectionHeading(title: "相关报道", detail: reports.count > 1 ? "同一事件下的当前内容" : "当前热点原文")
-                if reports.isEmpty {
-                    Text("没有可打开的相关内容。").foregroundStyle(.secondary)
-                } else {
-                    ForEach(reports) { stored in
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "link")
-                                .foregroundStyle(AppTheme.accent)
-                                .padding(.top, 2)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Link(stored.item.title, destination: stored.item.url)
-                                    .font(.body.weight(.medium))
-                                    .foregroundStyle(.primary)
-                                Text("\(stored.item.sourceID) · \(stored.lastSeenAt.trendingRelativeText)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                        }
-                        if stored.id != reports.last?.id {
-                            Divider().opacity(0.45)
-                        }
-                    }
-                }
-            }
+            .controlSize(.regular)
         }
     }
 
     @ViewBuilder
-    private var analysisSection: some View {
-        CardSurface {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    SectionHeading(title: "深入分析", detail: "按需读取最多三篇可获得的内容")
-                    Spacer()
-                    Button(analysis.isEmpty ? "开始分析" : "重新分析", action: analyze)
-                        .buttonStyle(QuietButtonStyle(prominent: true))
-                        .disabled(event == nil)
-                }
+    private var metadata: some View {
+        Label(row.sourceTitle, systemImage: "newspaper")
+        if let rank = row.rank {
+            Text("榜位 \(rank)")
+                .monospacedDigit()
+        }
+        if let category = nonEmpty(event?.category) {
+            Label(category, systemImage: "tag")
+        }
+        UpdateTimeLabel(date: updateDate)
+    }
 
-                if !analysis.isEmpty {
-                    Text(analysis)
-                        .font(.body)
-                        .textSelection(.enabled)
-                } else {
-                    Text("可以继续追问事件经过、来源差异、潜在影响和仍待确认的信息。")
-                        .foregroundStyle(.secondary)
-                }
+    @ViewBuilder
+    private var article: some View {
+        if let sourceSummary {
+            readingSection("新闻摘要", text: sourceSummary)
+        } else if eventSummary == nil {
+            VStack(alignment: .leading, spacing: 7) {
+                SectionHeading(title: "新闻内容")
+                Text(originalURL == nil ? "来源暂未提供正文或摘要。" : "来源暂未提供摘要，可打开原文阅读。")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func statusTitle(_ status: String) -> String {
-        switch status {
-        case "major": "重大事件"
-        case "candidate": "候选事件"
-        case "pending-analysis": "待分析"
-        default: status
+    private func readingSection(_ title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            SectionHeading(title: title)
+            Text(text)
+                .font(.system(size: 16))
+                .lineSpacing(5)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private var relatedReports: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            SectionHeading(title: "相关报道")
+                .padding(.bottom, 4)
+
+            ForEach(reports.filter { $0.id != row.id }) { report in
+                Link(destination: report.item.url) {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(report.item.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.primary)
+                            Text(sourceNames[report.item.sourceID] ?? report.item.sourceID)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent)
+                            .padding(.top, 3)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 8)
+                }
+                .buttonStyle(SelectableButtonStyle())
+            }
+        }
+    }
+
+    private func nonEmpty(_ text: String?) -> String? {
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return text
+    }
+}
+
+@MainActor
+private struct AnalysisConversationView: View {
+    static let initialPrompt = "这条新闻发生了什么？请整理已知事实、时间线和待确认的信息。"
+
+    @ObservedObject var chat: AnalysisChatModel
+    let row: SnapshotRow?
+    @Binding var draft: String
+    let hasConnection: Bool
+    let send: (String, SnapshotRow.ID) -> Void
+    let retry: (SnapshotRow.ID) -> Void
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            if let row {
+                let session = chat.session(for: row.id)
+                transcript(row: row, session: session)
+                    .id(row.id)
+                Divider()
+                composer(itemID: row.id, isStreaming: session.isStreaming)
+            } else {
+                ContentUnavailableView(
+                    "选择热点后开始对话",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("每条热点有自己的对话。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(AppTheme.sidebar)
+    }
+
+    private var header: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(AppTheme.accent)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("AI 对话")
+                    .font(.system(size: 18, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                if let row {
+                    Text(row.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(row.title)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: close) {
+                Label("隐藏 AI 对话", systemImage: "sidebar.right")
+                    .labelStyle(.iconOnly)
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(SelectableButtonStyle())
+            .help("隐藏 AI 对话")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func transcript(row: SnapshotRow, session: AnalysisChatSession) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 15) {
+                    if !hasConnection {
+                        configurationNotice
+                    }
+                    if session.messages.isEmpty && session.error == nil {
+                        intro(itemID: row.id, isStreaming: session.isStreaming)
+                    }
+                    ForEach(session.messages) { message in
+                        if !message.text.isEmpty {
+                            messageView(message)
+                        }
+                    }
+                    if session.isStreaming {
+                        HStack(spacing: 7) {
+                            ProgressView().controlSize(.small)
+                            Text("正在生成…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                    if let error = session.error {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(error, systemImage: "exclamationmark.circle")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                            if hasConnection && !session.isStreaming {
+                                Button("重试", systemImage: "arrow.clockwise") { retry(row.id) }
+                                    .buttonStyle(.bordered)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Color.clear
+                        .frame(height: 1)
+                        .id("conversation-bottom")
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+            }
+            .onChange(of: session.messages.count, initial: true) { _, _ in
+                proxy.scrollTo("conversation-bottom", anchor: .bottom)
+            }
+            .onChange(of: session.messages.last?.text) { _, _ in
+                if session.isStreaming { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+            }
+            .onChange(of: session.isStreaming) { _, _ in
+                proxy.scrollTo("conversation-bottom", anchor: .bottom)
+            }
+            .onChange(of: session.error) { _, error in
+                if error != nil { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
+            }
+        }
+    }
+
+    private var configurationNotice: some View {
+        CardSurface(padding: 13) {
+            VStack(alignment: .leading, spacing: 7) {
+                Label("配置分析模型", systemImage: "gearshape")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("在设置的「AI 分析」中添加模型连接和 API Key，再为「深入分析」分配该连接。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func intro(itemID: SnapshotRow.ID, isStreaming: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionHeading(title: "从一个问题开始", detail: "围绕当前热点提问，也可以继续追问细节。")
+            if hasConnection {
+                promptButton("发生了什么？", prompt: Self.initialPrompt, itemID: itemID)
+                promptButton("有哪些影响？", prompt: "这条新闻可能带来哪些影响？请区分已知影响与推测。", itemID: itemID)
+            }
+        }
+        .disabled(isStreaming)
+    }
+
+    private func messageView(_ message: AnalysisChatMessage) -> some View {
+        let isUser = if case .user = message.role { true } else { false }
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(isUser ? "你" : "AI", systemImage: isUser ? "person.crop.circle" : "sparkles")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isUser ? Color.secondary : AppTheme.accent)
+                .accessibilityAddTraits(.isHeader)
+            Text(message.text)
+                .font(.system(size: 15))
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(isUser ? 11 : 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isUser ? Color.primary.opacity(0.06) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func promptButton(_ title: String, prompt: String, itemID: SnapshotRow.ID) -> some View {
+        Button(title) { send(prompt, itemID) }
+            .buttonStyle(.bordered)
+    }
+
+    private func composer(itemID: SnapshotRow.ID, isStreaming: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            TextField("就这条热点提问…", text: $draft, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 14))
+                .lineLimit(2...5)
+                .accessibilityLabel("对话输入")
+                .disabled(!hasConnection)
+
+            HStack {
+                if !isStreaming, hasConnection, case .assistant? = chat.session(for: itemID).messages.last?.role {
+                    promptButton("继续分析", prompt: "请继续分析，补充尚待确认的信息和接下来值得关注的线索。", itemID: itemID)
+                }
+                Spacer()
+                if isStreaming {
+                    Button("停止", systemImage: "stop.fill") {
+                        chat.cancel(itemID: itemID)
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button("发送", systemImage: "arrow.up") {
+                        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { return }
+                        send(text, itemID)
+                        draft = ""
+                    }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!hasConnection || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("发送（⌘↩）")
+                }
+            }
+        }
+        .padding(14)
+        .background(AppTheme.canvas)
     }
 }
