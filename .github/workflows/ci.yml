@@ -212,7 +212,7 @@ jobs:
           {
             printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
             printf 'CI 已校验 DMG 挂载、嵌套签名、Team ID / App ID 运行身份、App Group 权限与 Widget 扩展点。安装后可在“设置 → 更新”检查并一键安装后续版本。\n\n'
-            printf '本版重构桌面组件、事件中心与设置界面，提供单行热榜、独立组件配置及右侧流式 AI 对话。\n'
+            printf '每个组件可固定显示知乎、微博等榜单；可切换组件按尺寸、起始榜单及组件编号保存选择。事件中心与设置采用统一配色，小组件使用柔和渐变背景，并提供右侧流式 AI 对话。\n'
           } > "$notes"
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

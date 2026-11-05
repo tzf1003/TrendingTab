@@ -122,11 +122,24 @@ final class CoreTests: XCTestCase {
             unreadCount: 0
         )
         try SnapshotStore.write(snapshot, directory: directory)
-        _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: "zhihu-widget", tabID: zhihuID, page: 0, directory: directory)
-        _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: "weibo-widget", tabID: weiboID, page: 0, directory: directory)
-
-        XCTAssertEqual(SnapshotStore.selection(widgetID: "zhihu-widget", directory: directory)?.tabID, zhihuID)
-        XCTAssertEqual(SnapshotStore.selection(widgetID: "weibo-widget", directory: directory)?.tabID, weiboID)
+        let small = WidgetSelectionScope(initialTabID: zhihuID, fixedBoard: false, slot: "one", size: .small)
+        let medium = WidgetSelectionScope(initialTabID: zhihuID, fixedBoard: false, slot: "one", size: .medium)
+        let anotherMedium = WidgetSelectionScope(initialTabID: zhihuID, fixedBoard: false, slot: "two", size: .medium)
+        let weiboMedium = WidgetSelectionScope(initialTabID: weiboID, fixedBoard: false, slot: "one", size: .medium)
+        let scopes = [small, medium, anotherMedium, weiboMedium]
+        for scope in scopes {
+            _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: scope.storageKey,
+                                                  tabID: zhihuID, page: 0, directory: directory)
+        }
+        // Switching one configuration keeps the other sizes, slots and starting boards intact.
+        _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: medium.storageKey,
+                                              tabID: weiboID, page: 0, directory: directory)
+        for scope in scopes {
+            let selection = SnapshotStore.selection(widgetID: scope.storageKey, directory: directory)
+            XCTAssertEqual(selection?.tabID, scope == medium ? weiboID : zhihuID)
+            XCTAssertEqual(scope.resolvedTabID(available: [zhihuID, weiboID], profileDefault: zhihuID,
+                                               remembered: selection), selection?.tabID)
+        }
 
         let eventID = UUID()
         try SnapshotStore.recordOpenedItem("weibo:item", eventID: eventID, directory: directory)
@@ -209,6 +222,24 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(WidgetSelection.resolvedTabID(available: [first, configured], preferred: [deleted, configured, first]), configured)
         XCTAssertEqual(WidgetSelection.resolvedTabID(available: [first, configured], preferred: [configured, first]), configured)
         XCTAssertNil(WidgetSelection.resolvedTabID(available: [], preferred: [configured]))
+    }
+
+    func testFixedWidgetUsesItsConfiguredBoardAcrossReloads() {
+        let zhihuID = UUID(), weiboID = UUID(), deletedID = UUID()
+        let scope = WidgetSelectionScope(initialTabID: weiboID, fixedBoard: true, slot: "one", size: .small)
+        let selection = WidgetSelection(profileID: UUID(), tabID: zhihuID, page: 0, generation: 1)
+        XCTAssertEqual(scope.resolvedTabID(available: [zhihuID, weiboID], profileDefault: zhihuID,
+                                           remembered: selection), weiboID)
+        var reconfigured = scope
+        reconfigured.initialTabID = zhihuID
+        XCTAssertEqual(reconfigured.resolvedTabID(available: [zhihuID, weiboID], profileDefault: weiboID,
+                                                 remembered: selection), zhihuID)
+        reconfigured.initialTabID = deletedID
+        XCTAssertEqual(reconfigured.resolvedTabID(available: [zhihuID, weiboID], profileDefault: weiboID,
+                                                 remembered: selection), weiboID)
+        XCTAssertEqual(reconfigured.resolvedTabID(available: [zhihuID], profileDefault: deletedID,
+                                                 remembered: selection), zhihuID)
+        XCTAssertNil(scope.resolvedTabID(available: [], profileDefault: zhihuID, remembered: selection))
     }
 
     func testReleaseFeedSelectsNewerDMG() throws {

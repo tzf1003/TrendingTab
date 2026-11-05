@@ -42,28 +42,52 @@ struct BoardQuery: EntityQuery {
 
 struct BoardConfigurationIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "热榜"
-    static let description = IntentDescription("选择默认榜单。多个可切换组件请选择不同的独立配置。")
+    static let description = IntentDescription("为这个组件选择榜单。关闭固定显示后可点击标签或箭头切换；同尺寸的多个可切换组件请选择不同编号。")
 
-    @Parameter(title: "默认榜单") var board: BoardOption?
-    @Parameter(title: "固定榜单", default: false) var fixedBoard: Bool
-    @Parameter(title: "独立配置", default: .one) var slot: WidgetSlot
+    @Parameter(title: "显示榜单") var board: BoardOption?
+    @Parameter(title: "固定显示此榜单", default: true) var fixedBoard: Bool
+    @Parameter(title: "组件编号", default: .one) var slot: WidgetSlot
+
+    static var parameterSummary: some ParameterSummary {
+        When(\.$fixedBoard, .equalTo, true) {
+            Summary {
+                \.$board
+                \.$fixedBoard
+            }
+        } otherwise: {
+            Summary {
+                \.$board
+                \.$fixedBoard
+                \.$slot
+            }
+        }
+    }
 
     init() {
-        fixedBoard = false
+        fixedBoard = true
         slot = .one
     }
 
-    func resolvedID(_ context: TimelineProviderContext) -> String {
-        let boardKey = board?.id ?? "current"
-        let mode = fixedBoard ? "fixed" : "dynamic"
-        return "widget-\(mode)-\(boardKey)-\(slot.rawValue)"
+    func selectionScope(for family: WidgetFamily) -> WidgetSelectionScope {
+        let size: WidgetSelectionScope.Size
+        switch family {
+        case .systemSmall: size = .small
+        case .systemMedium: size = .medium
+        default: size = .large
+        }
+        return WidgetSelectionScope(
+            initialTabID: board.flatMap { UUID(uuidString: $0.id) },
+            fixedBoard: fixedBoard,
+            slot: slot.rawValue,
+            size: size
+        )
     }
 }
 
 enum WidgetSlot: String, AppEnum {
     case one, two, three, four, five, six, seven, eight
 
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "独立配置")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "组件编号")
     static let caseDisplayRepresentations: [WidgetSlot: DisplayRepresentation] = [
         .one: "组件 1", .two: "组件 2", .three: "组件 3", .four: "组件 4",
         .five: "组件 5", .six: "组件 6", .seven: "组件 7", .eight: "组件 8",

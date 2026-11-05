@@ -81,7 +81,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity)
             }
             .id(selection)
-            .background(AppTheme.canvas)
+            .background(PaneSurface(role: .reader))
         }
         .frame(minWidth: 800, idealWidth: 900, minHeight: 540, idealHeight: 640)
         .tint(AppTheme.actionTint)
@@ -132,7 +132,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 22)
-        .background(AppTheme.sidebar)
+        .background(PaneSurface(role: .sidebar))
     }
 
     private var pageHeader: some View {
@@ -161,6 +161,20 @@ struct SettingsView: View {
     }
 
     private var tabsSettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            CardSurface {
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionHeading(title: "每个组件，各看各的榜单", detail: "在桌面右键组件，选择“编辑小组件”进行配置。")
+                    Label("专用榜单：选择知乎、微博等“显示榜单”，开启“固定显示此榜单”。", systemImage: "pin")
+                    Label("自由切换：关闭固定显示，同尺寸的多个组件分别选择“组件 1”“组件 2”等编号。", systemImage: "rectangle.on.rectangle")
+                }
+                .font(.system(size: 13))
+            }
+            tabOrderSettings
+        }
+    }
+
+    private var tabOrderSettings: some View {
         CardSurface {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top) {

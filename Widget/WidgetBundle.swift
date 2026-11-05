@@ -45,15 +45,17 @@ struct Provider: AppIntentTimelineProvider {
         let snapshot = SnapshotStore.read() ?? WidgetSnapshot(
             generation: 0, generatedAt: .now, profiles: [], tabs: [], statuses: [], unreadCount: 0
         )
-        let widgetID = configuration.resolvedID(context)
+        let scope = configuration.selectionScope(for: context.family)
+        let widgetID = scope.storageKey
         let profile = snapshot.profiles.first ?? WidgetProfile(
             name: "默认", orderedTabIDs: snapshot.tabs.map(\.id), defaultTabID: snapshot.tabs.first?.id
         )
         let remembered = SnapshotStore.selection(widgetID: widgetID)
-        let configuredTab = configuration.board.flatMap { UUID(uuidString: $0.id) }
-        let preferred = configuration.fixedBoard ? [configuredTab, profile.defaultTabID]
-            : [remembered?.tabID, configuredTab, profile.defaultTabID]
-        let validTab = WidgetSelection.resolvedTabID(available: snapshot.tabs.map(\.id), preferred: preferred)
+        let validTab = scope.resolvedTabID(
+            available: snapshot.tabs.map(\.id),
+            profileDefault: profile.defaultTabID,
+            remembered: remembered
+        )
         return WidgetEntry(
             date: .now, snapshot: snapshot,
             selection: WidgetSelection(profileID: profile.id, tabID: validTab, page: 0,
@@ -90,7 +92,7 @@ struct TrendingWidget: Widget {
             WidgetContent(entry: entry)
         }
         .configurationDisplayName("热榜")
-        .description("实时热点与多平台榜单。编辑组件可选择默认榜单与独立配置。")
+        .description("每个组件可分别固定为知乎、微博等榜单，也可按组件编号独立切换标签。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .contentMarginsDisabled()
     }
@@ -129,7 +131,7 @@ struct WidgetContent: View {
             .padding(.vertical, 9)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
-        .containerBackground(for: .widget) { Color(nsColor: .windowBackgroundColor) }
+        .containerBackground(for: .widget) { WidgetSurface() }
         .widgetURL(WidgetNavigationTarget(tabID: currentTab?.id).url)
     }
 
@@ -157,6 +159,12 @@ struct WidgetContent: View {
                             .padding(.vertical, 4)
                             .background(tab.id == currentTab?.id ? WidgetTheme.accent.opacity(0.13) : Color.clear,
                                         in: RoundedRectangle(cornerRadius: 8))
+                            .overlay {
+                                if tab.id == currentTab?.id {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(WidgetTheme.accent.opacity(0.16), lineWidth: 0.5)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                 }
@@ -195,12 +203,14 @@ struct WidgetContent: View {
                         }
                         .buttonStyle(.plain)
                         if row.id != columns[index].last?.id {
-                            Divider().opacity(0.28)
+                            Rectangle().fill(SurfacePalette.hairline).frame(height: 0.5)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                if layout.columns == 2 && index == 0 { Divider().opacity(0.35) }
+                if layout.columns == 2 && index == 0 {
+                    Rectangle().fill(SurfacePalette.hairline).frame(width: 0.5)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -264,5 +274,5 @@ private struct WidgetLayout {
 }
 
 private enum WidgetTheme {
-    static let accent = Color(red: 0.85, green: 0.30, blue: 0.17)
+    static let accent = SurfacePalette.accent
 }

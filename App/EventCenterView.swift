@@ -105,7 +105,7 @@ struct EventCenterView: View {
             Divider()
             sidebarFooter
         }
-        .background(AppTheme.sidebar)
+        .background(PaneSurface(role: .sidebar))
     }
 
     private var sidebarHeader: some View {
@@ -302,7 +302,7 @@ struct EventCenterView: View {
             readerContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(AppTheme.canvas)
+        .background(PaneSurface(role: .reader))
     }
 
     @ViewBuilder
@@ -691,7 +691,7 @@ private struct AnalysisConversationView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(AppTheme.sidebar)
+        .background(PaneSurface(role: .inspector))
     }
 
     private var header: some View {
@@ -866,6 +866,6 @@ private struct AnalysisConversationView: View {
             }
         }
         .padding(14)
-        .background(AppTheme.canvas)
+        .background(SurfacePalette.inspector)
     }
 }

@@ -2,18 +2,38 @@ import AppKit
 import SwiftUI
 
 enum AppTheme {
-    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
-        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return NSColor(srgbRed: 1, green: 0.58, blue: 0.46, alpha: 1)
-        }
-        return NSColor(srgbRed: 0.67, green: 0.24, blue: 0.15, alpha: 1)
-    })
+    static let accent = SurfacePalette.accent
     static let accentSoft = accent.opacity(0.12)
-    static let actionTint = Color(red: 0.66, green: 0.23, blue: 0.15)
-    static let canvas = Color(nsColor: .windowBackgroundColor)
-    static let sidebar = Color(nsColor: .underPageBackgroundColor)
-    static let card = Color(nsColor: .controlBackgroundColor)
-    static let rule = Color(nsColor: .separatorColor)
+    static let actionTint = SurfacePalette.action
+    static let canvas = SurfacePalette.canvas
+    static let card = SurfacePalette.card
+    static let rule = SurfacePalette.hairline
+}
+
+struct PaneSurface: View {
+    enum Role {
+        case sidebar, reader, inspector
+    }
+
+    let role: Role
+
+    var body: some View {
+        LinearGradient(
+            colors: [color, color, AppTheme.canvas],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+
+    private var color: Color {
+        switch role {
+        case .sidebar: SurfacePalette.sidebar
+        case .reader: SurfacePalette.reading
+        case .inspector: SurfacePalette.inspector
+        }
+    }
 }
 
 struct CardSurface<Content: View>: View {
@@ -26,6 +46,7 @@ struct CardSurface<Content: View>: View {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AppTheme.card, in: shape)
+            .shadow(color: .black.opacity(0.025), radius: 10, y: 3)
             .overlay {
                 shape.strokeBorder(AppTheme.rule, lineWidth: 1)
                     .allowsHitTesting(false)
@@ -95,8 +116,8 @@ struct SelectableButtonStyle: ButtonStyle {
             content
                 .background(fill, in: shape)
                 .overlay {
-                    if selected && contrast == .increased {
-                        shape.strokeBorder(AppTheme.accent, lineWidth: 1)
+                    if selected {
+                        shape.strokeBorder(AppTheme.accent.opacity(contrast == .increased ? 1 : 0.16), lineWidth: 1)
                             .allowsHitTesting(false)
                     }
                 }
