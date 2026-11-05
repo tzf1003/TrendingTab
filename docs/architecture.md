@@ -14,6 +14,6 @@ TrendingTab 使用一个 Xcode 工程和本地 Swift Package。
 | `TrendingTabWidgetBridge` | 原子快照与跨进程标签选择 |
 | `TrendingTabKit` | 主应用协调采集、分析和发布 |
 
-主应用写入 SQLite。Widget Extension 读取 App Group 中同一代快照，快照同时包含配置、标签内容和来源状态。标签切换只修改选择文件并请求 WidgetKit 重载。
+主应用写入 SQLite，并把配置、标签内容和来源状态生成到 App Group 中的同一代快照。主应用与 Widget 都声明 `group.dev.trendingtab.shared`；Widget Extension 额外启用 sandbox 与网络客户端权限。每个 Widget 使用自己的配置与选择键，因此固定知乎和固定微博的组件不会联动。标签切换只修改对应组件的选择文件并请求 WidgetKit 重载。
 
 条目身份优先使用平台原生 ID，否则使用去除跟踪参数后的 URL 哈希。平台标签保留原排名；跨平台标签使用排名融合和时效，不直接相加热度原值。

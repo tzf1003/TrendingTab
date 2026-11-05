@@ -9,10 +9,20 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-14
     timeout-minutes: 60
+    env:
+      MARKETING_VERSION: 0.2.${{ github.run_number }}
+      CURRENT_PROJECT_VERSION: ${{ github.run_number }}
+      ARCHS: arm64 x86_64
+      SIGNING_MODE: auto
+
     steps:
       - uses: actions/checkout@v4
 
@@ -24,41 +34,150 @@ jobs:
       - name: Test
         run: swift test
 
-      - name: Import signing certificate
-        if: ${{ secrets.APPLE_CERTIFICATE_P12 != '' }}
+      - name: Import signing material
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_APP_PROVISIONING_PROFILE: ${{ secrets.APPLE_APP_PROVISIONING_PROFILE }}
+          APPLE_WIDGET_PROVISIONING_PROFILE: ${{ secrets.APPLE_WIDGET_PROVISIONING_PROFILE }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          if [ -z "${APPLE_CERTIFICATE_P12:-}" ] || \
+             [ -z "${APPLE_APP_PROVISIONING_PROFILE:-}" ] || \
+             [ -z "${APPLE_WIDGET_PROVISIONING_PROFILE:-}" ]; then
+            echo "Complete Developer ID material is not configured; using an ad-hoc signed DMG."
+            echo "SIGNING_MODE=ad-hoc" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          keychain="$RUNNER_TEMP/trendingtab-signing.keychain-db"
+          keychain_password="${KEYCHAIN_PASSWORD:-$(openssl rand -hex 24)}"
+          security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
-          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
-          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+
+          printf '%s' "$APPLE_CERTIFICATE_P12" | /usr/bin/base64 -D > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profiles"
+          app_profile="$profiles/trendingtab-app.mobileprovision"
+          widget_profile="$profiles/trendingtab-widget.mobileprovision"
+          printf '%s' "$APPLE_APP_PROVISIONING_PROFILE" | /usr/bin/base64 -D > "$app_profile"
+          printf '%s' "$APPLE_WIDGET_PROVISIONING_PROFILE" | /usr/bin/base64 -D > "$widget_profile"
+
+          app_profile_id="$(
+            security cms -D -i "$app_profile" |
+              plutil -extract UUID raw -o - -
+          )"
+          widget_profile_id="$(
+            security cms -D -i "$widget_profile" |
+              plutil -extract UUID raw -o - -
+          )"
+          team_id="$(
+            security cms -D -i "$app_profile" |
+              plutil -extract TeamIdentifier.0 raw -o - -
+          )"
+
+          echo "TRENDINGTAB_APP_PROFILE_ID=$app_profile_id" >> "$GITHUB_ENV"
+          echo "TRENDINGTAB_WIDGET_PROFILE_ID=$widget_profile_id" >> "$GITHUB_ENV"
+          echo "DEVELOPMENT_TEAM=$team_id" >> "$GITHUB_ENV"
+          echo "SIGNING_MODE=developer-id" >> "$GITHUB_ENV"
           security find-identity -v -p codesigning "$keychain"
+
+      - name: Configure notarization
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APPLE_PASSWORD: ${{ secrets.NOTARY_APPLE_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ "${SIGNING_MODE:-ad-hoc}" != "developer-id" ] || \
+             [ -z "${NOTARY_APPLE_ID:-}" ] || \
+             [ -z "${NOTARY_APPLE_PASSWORD:-}" ] || \
+             [ -z "${NOTARY_TEAM_ID:-}" ]; then
+            echo "Notarization is not configured for this build."
+            exit 0
+          fi
+          profile="TrendingTab-notary"
+          xcrun notarytool store-credentials "$profile" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_APPLE_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID"
+          echo "NOTARY_KEYCHAIN_PROFILE=$profile" >> "$GITHUB_ENV"
 
       - name: Build DMG
         env:
           DERIVED_DATA_PATH: ${{ runner.temp }}/DerivedData
           OUTPUT_DIR: ${{ runner.temp }}/release
-          NOTARY_KEYCHAIN_PROFILE: ${{ secrets.NOTARY_KEYCHAIN_PROFILE }}
         run: zsh scripts/package-dmg.sh
 
-      - name: Verify DMG mounts
+      - name: Verify DMG
         run: |
           set -euo pipefail
           dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
           test -n "$dmg"
-          mount="$(hdiutil attach "$dmg" -nobrowse | awk '/\/Volumes\// { print $NF; exit }')"
-          test -d "$mount/TrendingTab.app"
-          codesign --verify --deep --strict --verbose=2 "$mount/TrendingTab.app"
-          hdiutil detach "$mount"
+          hdiutil verify "$dmg"
+
+          attach_plist="$RUNNER_TEMP/dmg-attach.plist"
+          hdiutil attach "$dmg" -nobrowse -plist > "$attach_plist"
+          mount="$(
+            plutil -convert json -o - "$attach_plist" |
+              ruby -rjson -e 'puts JSON.parse(STDIN.read)["system-entities"].filter_map { |item| item["mount-point"] }.first'
+          )"
+          test -n "$mount"
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          app="$mount/TrendingTab.app"
+          widget="$app/Contents/PlugIns/TrendingTabWidget.appex"
+          test -d "$app"
+          test -d "$widget"
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          app_entitlements="$(codesign -d --entitlements :- "$app" 2>&1)"
+          widget_entitlements="$(codesign -d --entitlements :- "$widget" 2>&1)"
+          printf '%s\n' "$app_entitlements" | grep -F 'group.dev.trendingtab.shared'
+          printf '%s\n' "$widget_entitlements" | grep -F 'com.apple.security.app-sandbox'
+          printf '%s\n' "$widget_entitlements" | grep -F 'group.dev.trendingtab.shared'
+          /usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' \
+            "$widget/Contents/Info.plist" |
+            grep -Fx 'com.apple.widgetkit-extension'
+
+          if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ] && \
+             [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
+            xcrun stapler validate "$dmg"
+            spctl --assess --type execute --verbose=2 "$app"
+          fi
           echo "Verified $dmg"
+
+      - name: Create checksum
+        run: |
+          set -euo pipefail
+          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
+          test -n "$dmg"
+          cd "$(dirname "$dmg")"
+          shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256"
+          cat "$(basename "$dmg").sha256"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrendingTab-DMG-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/release/TrendingTab-*.dmg
+            ${{ runner.temp }}/release/TrendingTab-*.dmg.sha256
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Publish release
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
@@ -67,9 +186,39 @@ jobs:
         run: |
           set -euo pipefail
           dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
-          tag="build-${GITHUB_SHA::12}"
-          gh release create "$tag" "$dmg" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "TrendingTab ${GITHUB_SHA::12}" \
-            --notes "CI 构建的 macOS DMG。未配置 Developer ID 与公证凭据时，此包使用 ad-hoc 签名，首次打开需要在系统设置中允许。" \
-            --latest
+          test -n "$dmg"
+          checksum="$dmg.sha256"
+          version="$(basename "$dmg" .dmg)"
+          version="${version#TrendingTab-}"
+          tag="v${version}"
+
+          if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ]; then
+            if [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
+              signing="Developer ID 签名并已公证"
+            else
+              signing="Developer ID 签名"
+            fi
+          else
+            signing="ad-hoc 签名"
+          fi
+
+          notes="$RUNNER_TEMP/release-notes.md"
+          {
+            printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
+            printf 'CI 已校验 DMG 挂载、嵌套签名、App Group 权限与 Widget 扩展点。安装后可在“设置 → 更新”检查并一键安装后续版本。\n'
+          } > "$notes"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$dmg" "$checksum" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "TrendingTab ${version}" \
+              --notes-file "$notes" \
+              --latest
+          else
+            gh release create "$tag" "$dmg" "$checksum" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "TrendingTab ${version}" \
+              --notes-file "$notes" \
+              --latest
+          fi

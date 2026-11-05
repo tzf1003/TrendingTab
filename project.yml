@@ -7,10 +7,11 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2.0"
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: GJUT2BVM7R
+    ENABLE_HARDENED_RUNTIME: YES
 packages:
   TrendingTabKit:
     path: .
@@ -29,12 +30,16 @@ targets:
     dependencies:
       - package: TrendingTabKit
         product: TrendingTabKit
+      - target: TrendingTabWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.trendingtab.app
+        CODE_SIGN_ENTITLEMENTS: App/TrendingTab.entitlements
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        PROVISIONING_PROFILE_SPECIFIER: "$(TRENDINGTAB_APP_PROFILE_ID)"
   TrendingTabWidget:
     type: app-extension
     platform: macOS
@@ -43,15 +48,17 @@ targets:
     dependencies:
       - package: TrendingTabKit
         product: TrendingTabKit
+      - sdk: AppIntents.framework
       - package: GRDB
         product: GRDB
       - package: SwiftSoup
         product: SwiftSoup
-      - target: TrendingTab
-        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.trendingtab.app.widget
+        CODE_SIGN_ENTITLEMENTS: Widget/TrendingTabWidget.entitlements
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_NSExtensionPointIdentifier: com.apple.widgetkit-extension
-        INFOPLIST_KEY_NSExtensionPrincipalClass: ""
+        INFOPLIST_KEY_CFBundleDisplayName: 热榜
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        PROVISIONING_PROFILE_SPECIFIER: "$(TRENDINGTAB_WIDGET_PROFILE_ID)"
+        SKIP_INSTALL: YES

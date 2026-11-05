@@ -79,6 +79,7 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func save(result: FetchResult) throws {
         try writer.write { database in
+            try database.execute(sql: "UPDATE items SET historical = 1 WHERE payload LIKE ?", arguments: ["%\"boardID\":\"\(result.boardID)\"%"])
             for entry in result.items {
                 let existing = try Row.fetchOne(database, sql: "SELECT payload, first_seen_at, content_hash FROM items WHERE id = ?", arguments: [entry.id])
                 let previous = existing.flatMap { row -> StoredItem? in
@@ -100,7 +101,7 @@ public final class AppDatabase: @unchecked Sendable {
                 )
                 let payload = String(data: try TrendingJSON.data(stored), encoding: .utf8)!
                 try database.execute(
-                    sql: "INSERT INTO items (id, payload, first_seen_at, last_seen_at, content_hash, historical) VALUES (?, ?, ?, ?, ?, 0) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, last_seen_at = excluded.last_seen_at, content_hash = excluded.content_hash, historical = 0",
+                    sql: "INSERT INTO items (id, payload, first_seen_at, last_seen_at, content_hash, historical) VALUES (?, ?, ?, ?, ?, 0) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, last_seen_at = excluded.last_seen_at, content_hash = excluded.content_hash, historical = 0, first_seen_at = items.first_seen_at",
                     arguments: [entry.id, payload, stored.firstSeenAt, stored.lastSeenAt, hash]
                 )
                 try database.execute(
@@ -113,10 +114,44 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func recentItems(since: Date) throws -> [StoredItem] {
         try writer.read { database in
-            let rows = try Row.fetchAll(database, sql: "SELECT payload FROM items WHERE last_seen_at >= ? AND historical = 0 ORDER BY last_seen_at DESC", arguments: [since])
+            let rows = try Row.fetchAll(database, sql: "SELECT payload FROM items WHERE historical = 0 ORDER BY last_seen_at DESC")
             return rows.compactMap { row in
                 guard let payload: String = row["payload"] else { return nil }
                 return try? TrendingJSON.value(StoredItem.self, from: Data(payload.utf8))
+            }
+        }
+    }
+
+    public func clear(boards: [String]) throws {
+        let unique = Array(Set(boards))
+        guard !unique.isEmpty else { return }
+        try writer.write { database in
+            let rows = try Row.fetchAll(database, sql: "SELECT id, payload FROM items")
+            for row in rows {
+                guard let id: String = row["id"],
+                      let payload: String = row["payload"],
+                      let data = payload.data(using: .utf8),
+                      let stored = try? TrendingJSON.value(StoredItem.self, from: data),
+                      unique.contains(stored.item.boardID) else {
+                    continue
+                }
+                try database.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
+            }
+        }
+    }
+
+    public func clear(boardsNotIn boards: Set<String>) throws {
+        try writer.write { database in
+            let rows = try Row.fetchAll(database, sql: "SELECT id, payload FROM items")
+            for row in rows {
+                guard let id: String = row["id"],
+                      let payload: String = row["payload"],
+                      let data = payload.data(using: .utf8),
+                      let stored = try? TrendingJSON.value(StoredItem.self, from: data),
+                      !boards.contains(stored.item.boardID) else {
+                    continue
+                }
+                try database.execute(sql: "DELETE FROM items WHERE id = ?", arguments: [id])
             }
         }
     }
@@ -166,6 +201,7 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func save(events: [EventCluster]) throws {
         try writer.write { database in
+            try database.execute(sql: "DELETE FROM events")
             for event in events {
                 try database.execute(
                     sql: "INSERT INTO events (id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
@@ -223,14 +259,17 @@ public final class AppDatabase: @unchecked Sendable {
         }
     }
 
-    public func prune(now: Date) throws {
-        let items = now.addingTimeInterval(-7 * 24 * 3600)
-        let eventsCutoff = now.addingTimeInterval(-30 * 24 * 3600)
+    public func prune(now: Date, itemCutoff: Date? = nil) throws {
+        let observationsCutoff = now.addingTimeInterval(-24 * 3600)
+        let notificationsCutoff = now.addingTimeInterval(-30 * 24 * 3600)
+        let staleItemsCutoff = itemCutoff ?? now.addingTimeInterval(-24 * 3600)
         try writer.write { database in
-            try database.execute(sql: "UPDATE items SET historical = 1 WHERE last_seen_at < ?", arguments: [items])
-            try database.execute(sql: "DELETE FROM observations WHERE fetched_at < ?", arguments: [items])
-            try database.execute(sql: "DELETE FROM events WHERE updated_at < ?", arguments: [eventsCutoff])
-            try database.execute(sql: "DELETE FROM notifications WHERE created_at < ?", arguments: [eventsCutoff])
+            try database.execute(
+                sql: "DELETE FROM items WHERE historical = 1 OR last_seen_at < ?",
+                arguments: [staleItemsCutoff]
+            )
+            try database.execute(sql: "DELETE FROM observations WHERE fetched_at < ?", arguments: [observationsCutoff])
+            try database.execute(sql: "DELETE FROM notifications WHERE created_at < ?", arguments: [notificationsCutoff])
         }
     }
 }

@@ -76,8 +76,63 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(try database.reserveAIRun(id: UUID(), tokens: 100, now: now))
         XCTAssertEqual(try database.recoverUnknownAIRuns(), 1)
         let snapshot = WidgetSnapshot(generation: 3, generatedAt: now, profiles: [], tabs: [], statuses: [], unreadCount: 0)
-        try SnapshotStore.write(snapshot)
-        XCTAssertEqual(SnapshotStore.read()?.generation, 3)
+        let sharedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("trendingtab-shared-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: sharedDirectory) }
+        try SnapshotStore.write(snapshot, directory: sharedDirectory)
+        XCTAssertEqual(SnapshotStore.read(directory: sharedDirectory)?.generation, 3)
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func testDatabaseRemovesInactiveBoardsAndStaleItems() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("trendingtab-retention-\(UUID().uuidString).sqlite")
+        let database = try AppDatabase(path: url.path)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let oldBoardItem = NormalizedItem(sourceID: "weibo", boardID: "weibo.hot", nativeID: "old", title: "微博", url: URL(string: "https://example.com/weibo")!, rank: 1)
+        let currentBoardItem = NormalizedItem(sourceID: "zhihu", boardID: "zhihu.hot", nativeID: "new", title: "知乎", url: URL(string: "https://example.com/zhihu")!, rank: 1)
+        try database.save(result: FetchResult(sourceID: "weibo", boardID: "weibo.hot", fetchedAt: now.addingTimeInterval(-3600), parserVersion: "test", items: [oldBoardItem]))
+        try database.save(result: FetchResult(sourceID: "zhihu", boardID: "zhihu.hot", fetchedAt: now.addingTimeInterval(-60), parserVersion: "test", items: [currentBoardItem]))
+
+        XCTAssertEqual(Set(try database.recentItems(since: .distantPast).map(\.item.boardID)), Set(["weibo.hot", "zhihu.hot"]))
+        try database.clear(boardsNotIn: ["zhihu.hot"])
+        XCTAssertEqual(try database.recentItems(since: .distantPast).map(\.item.boardID), ["zhihu.hot"])
+
+        try database.prune(now: now, itemCutoff: now.addingTimeInterval(-1800))
+        XCTAssertEqual(try database.recentItems(since: .distantPast).map(\.item.boardID), ["zhihu.hot"])
+    }
+
+    func testWidgetSelectionsAreIndependentAndOpenTargetKeepsItem() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("trendingtab-widget-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let profileID = UUID()
+        let zhihuID = UUID()
+        let weiboID = UUID()
+        let snapshot = WidgetSnapshot(
+            generation: 1,
+            generatedAt: .now,
+            profiles: [WidgetProfile(id: profileID, name: "默认", orderedTabIDs: [zhihuID, weiboID], defaultTabID: zhihuID)],
+            tabs: [
+                SnapshotTab(id: zhihuID, title: "知乎", kind: .sourceBoard, rows: [], coverage: "", updatedAt: nil),
+                SnapshotTab(id: weiboID, title: "微博", kind: .sourceBoard, rows: [], coverage: "", updatedAt: nil)
+            ],
+            statuses: [],
+            unreadCount: 0
+        )
+        try SnapshotStore.write(snapshot, directory: directory)
+        _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: "zhihu-widget", tabID: zhihuID, page: 0, directory: directory)
+        _ = try SnapshotStore.updateSelection(profileID: profileID, widgetID: "weibo-widget", tabID: weiboID, page: 0, directory: directory)
+
+        XCTAssertEqual(SnapshotStore.selection(widgetID: "zhihu-widget", directory: directory)?.tabID, zhihuID)
+        XCTAssertEqual(SnapshotStore.selection(widgetID: "weibo-widget", directory: directory)?.tabID, weiboID)
+
+        let eventID = UUID()
+        try SnapshotStore.recordOpenedItem("weibo:item", eventID: eventID, directory: directory)
+        XCTAssertEqual(
+            SnapshotStore.consumeOpenedTarget(directory: directory),
+            OpenedItemTarget(itemID: "weibo:item", eventID: eventID)
+        )
     }
 
     func testCatalogCoversSeventeenSources() {
@@ -85,5 +140,16 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(ids.count, 17)
         XCTAssertTrue(ids.contains("wechat"))
         XCTAssertEqual(SourceCatalog.provider(id: "wechat")?.descriptor.availability, .requiresConfiguration)
+    }
+
+    func testReleaseFeedSelectsNewerDMG() throws {
+        let json = """
+        {"tag_name":"v0.2.0","body":"修复小组件","assets":[{"name":"TrendingTab-0.2.0.dmg","browser_download_url":"https://example.com/TrendingTab-0.2.0.dmg","digest":"sha256:abc123"}]}
+        """
+        let release = try ReleaseFeed.parse(Data(json.utf8), currentVersion: "0.1.0")
+        XCTAssertEqual(release?.version, "0.2.0")
+        XCTAssertEqual(release?.digest, "sha256:abc123")
+        XCTAssertNil(try ReleaseFeed.parse(Data(json.utf8), currentVersion: "0.2.0"))
+        XCTAssertFalse(ReleaseFeed.isNewer("0.1.9", than: "0.2.0"))
     }
 }

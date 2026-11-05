@@ -31,6 +31,16 @@ public final class TrendingAppModel: ObservableObject {
     @Published public private(set) var snapshot: WidgetSnapshot?
     @Published public private(set) var running = false
     @Published public var analysisText = ""
+    @Published public private(set) var availableRelease: AppRelease?
+    @Published public private(set) var updateState = "尚未检查"
+    @Published public var requestedEventID: UUID?
+    @Published public var requestedItemID: String?
+    @Published public var pendingEventToken = 0
+    @Published public var analysisEventID: UUID?
+
+    public var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
+    }
 
     public let database: AppDatabase
     private let transport: any HTTPTransport
@@ -45,6 +55,7 @@ public final class TrendingAppModel: ObservableObject {
         self.database = database
         self.transport = transport
         load()
+        Task { await checkForUpdate() }
     }
 
     public func start() {
@@ -65,6 +76,34 @@ public final class TrendingAppModel: ObservableObject {
         loop = nil
     }
 
+    public func reveal(eventID: UUID) {
+        requestedEventID = eventID
+        requestedItemID = nil
+        pendingEventToken += 1
+    }
+
+    public func reveal(itemID: String) {
+        requestedItemID = itemID
+        requestedEventID = events.first { $0.itemIDs.contains(itemID) }?.id
+        pendingEventToken += 1
+    }
+
+    public func reveal(itemID: String?, eventID: UUID?) {
+        requestedItemID = itemID
+        requestedEventID = eventID ?? itemID.flatMap { id in
+            events.first { $0.itemIDs.contains(id) }?.id
+        }
+        pendingEventToken += 1
+    }
+
+    public func reveal(request: String) {
+        if let eventID = UUID(uuidString: request), events.contains(where: { $0.id == eventID }) {
+            reveal(eventID: eventID)
+        } else {
+            reveal(itemID: request)
+        }
+    }
+
     public func refresh(manual: Bool) async {
         guard !running else { return }
         running = true
@@ -72,28 +111,41 @@ public final class TrendingAppModel: ObservableObject {
         let now = Date()
         var statuses: [SourceStatus] = []
         let providers = SourceCatalog.providers(customFeeds: feeds)
-        let referenced = Set(tabs.flatMap { tab -> [String] in
+        let activeTabs = tabs.filter { !$0.hidden || $0.monitoringEnabled }
+        let referenced = Set(activeTabs.flatMap { tab -> [String] in
             tab.boardIDs + tab.filter.sourceIDs.map { "\($0).hot" }
         })
+        let includesBroadAnalysis = activeTabs.contains {
+            $0.kind != .sourceBoard && $0.filter.sourceIDs.isEmpty
+        }
+        var requests: [(provider: any SourceProvider, board: BoardDescriptor)] = []
+        for provider in providers {
+            let boards = (try? await provider.boards()) ?? []
+            for selected in boards where includesBroadAnalysis || referenced.contains(selected.id) {
+                requests.append((provider, selected))
+            }
+        }
+        let activeBoardIDs = Set(requests.map(\.board.id))
         await withTaskGroup(of: SourceStatus.self) { group in
-            for provider in providers {
-                let boards = (try? await provider.boards()) ?? []
-                for selected in boards where referenced.isEmpty || referenced.contains(selected.id) || tabs.contains(where: { $0.kind != .sourceBoard && $0.filter.sourceIDs.isEmpty }) {
-                    group.addTask { [self] in
-                        await self.fetch(provider: provider, board: selected, now: now, manual: manual)
-                    }
+            for request in requests {
+                group.addTask { [self] in
+                    await self.fetch(provider: request.provider, board: request.board, now: now, manual: manual)
                 }
             }
             for await status in group { statuses.append(status) }
         }
         do {
             try database.save(statuses: statuses)
-            items = try database.recentItems(since: now.addingTimeInterval(-7 * 24 * 3600))
+            let staleBoards = statuses.filter(\.stale).map(\.boardID)
+            try database.clear(boards: staleBoards)
+            try database.clear(boardsNotIn: activeBoardIDs)
+            items = try database.recentItems(since: .distantPast)
             let grouped = EventGrouper.group(items, now: now)
             let merged = merge(existing: events, grouped: grouped)
-            events = await analyze(merged, now: now)
+            let activeIDs = Set(items.map(\.id))
+            events = await analyze(merged.filter { event in event.itemIDs.contains { activeIDs.contains($0) } }, now: now)
             try database.save(events: events)
-            try database.prune(now: now)
+            try database.prune(now: now, itemCutoff: activeCutoff(now: now))
             try publish(statuses: statuses, now: now)
             diagnostics = statuses.map {
                 DiagnosticRecord(id: $0.id, title: "\($0.sourceID) / \($0.boardID)", state: $0.state, message: $0.message, checkedAt: $0.checkedAt, lastSuccessAt: $0.lastSuccessAt)
@@ -116,7 +168,10 @@ public final class TrendingAppModel: ObservableObject {
         do {
             let result = try await provider.fetch(board: board.id, context: context)
             if result.items.isEmpty {
-                return SourceStatus(sourceID: board.sourceID, boardID: board.id, state: "empty", message: "合法空榜或内容未变化", lastSuccessAt: lastFetch[key], checkedAt: now, stale: false)
+                try database.save(result: result)
+                lastFetch[key] = now
+                backoff[key] = nil
+                return SourceStatus(sourceID: board.sourceID, boardID: board.id, state: "empty", message: "榜单当前为空", lastSuccessAt: now, checkedAt: now, stale: false)
             }
             try database.save(result: result)
             lastFetch[key] = now
@@ -133,6 +188,10 @@ public final class TrendingAppModel: ObservableObject {
     private func stale(_ date: Date?, now: Date) -> Bool {
         guard let date else { return true }
         return now.timeIntervalSince(date) > max(settings.refreshInterval * 2, 30 * 60)
+    }
+
+    private func activeCutoff(now: Date) -> Date {
+        now.addingTimeInterval(-max(settings.refreshInterval * 2, 30 * 60))
     }
 
     private func merge(existing: [EventCluster], grouped: [EventCluster]) -> [EventCluster] {
@@ -188,6 +247,7 @@ public final class TrendingAppModel: ObservableObject {
     }
 
     public func analyzeEvent(_ event: EventCluster) async {
+        analysisEventID = event.id
         guard let connectionID = assignment.analysis, let connection = connections.first(where: { $0.id == connectionID }), let credential = KeychainStore.read(account: connection.credentialAccount) else {
             analysisText = "请先配置深入分析模型和凭据。"
             return
@@ -227,8 +287,12 @@ public final class TrendingAppModel: ObservableObject {
         } else {
             profiles = [WidgetProfile(name: "默认", orderedTabIDs: tabs.map(\.id), defaultTabID: tabs.first?.id)]
         }
-        items = (try? database.recentItems(since: Date().addingTimeInterval(-7 * 24 * 3600))) ?? []
-        events = (try? database.events()) ?? []
+        try? database.prune(now: .now, itemCutoff: activeCutoff(now: .now))
+        items = (try? database.recentItems(since: .distantPast)) ?? []
+        events = ((try? database.events()) ?? []).filter { event in
+            let active = Set(items.map(\.id))
+            return event.itemIDs.contains { active.contains($0) }
+        }
         snapshot = SnapshotStore.read()
         _ = try? database.recoverUnknownAIRuns()
         persistConfiguration()
@@ -245,11 +309,76 @@ public final class TrendingAppModel: ObservableObject {
 
     public func moveTabs(from offsets: IndexSet, to offset: Int) {
         tabs = Self.reorder(tabs, from: offsets, to: offset)
-        if var profile = profiles.first {
-            profile.orderedTabIDs = tabs.map(\.id)
-            profiles[0] = profile
-        }
+        synchronizeProfileOrder()
         persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func moveTab(id: UUID, direction: Int) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let destination = min(max(0, index + direction), tabs.count - 1)
+        guard destination != index else { return }
+        tabs.swapAt(index, destination)
+        synchronizeProfileOrder()
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func moveTab(id: UUID, to destinationID: UUID) {
+        guard let source = tabs.firstIndex(where: { $0.id == id }),
+              let destination = tabs.firstIndex(where: { $0.id == destinationID }),
+              source != destination else {
+            return
+        }
+        let moving = tabs.remove(at: source)
+        let insertion = min(destination, tabs.count)
+        tabs.insert(moving, at: insertion)
+        synchronizeProfileOrder()
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func addBoardTab(_ board: BoardDescriptor) {
+        guard !tabs.contains(where: { $0.boardIDs == [board.id] && $0.kind == .sourceBoard }) else { return }
+        let title = SourceCatalog.provider(id: board.sourceID)?.descriptor.title ?? board.title
+        tabs.append(TabDefinition(title: title, kind: .sourceBoard, boardIDs: [board.id], sort: .sourceRank))
+        synchronizeProfileOrder()
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func removeTab(id: UUID) {
+        guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs.remove(at: index)
+        if let profileIndex = profiles.indices.first,
+           profiles[profileIndex].defaultTabID == id {
+            profiles[profileIndex].defaultTabID = tabs.first?.id
+        }
+        synchronizeProfileOrder()
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func setTabHidden(_ id: UUID, hidden: Bool) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[index].hidden = hidden
+        synchronizeProfileOrder()
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func setTabMonitoring(_ id: UUID, enabled: Bool) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[index].monitoringEnabled = enabled
+        persistConfiguration()
+        republishCurrentState()
+    }
+
+    public func setTabNotifications(_ id: UUID, enabled: Bool) {
+        guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[index].notification.enabled = enabled
+        persistConfiguration()
+        republishCurrentState()
     }
 
     public func updateSettings(_ settings: AppSettings) {
@@ -263,11 +392,64 @@ public final class TrendingAppModel: ObservableObject {
         persistConfiguration()
     }
 
+    public func updateAssignment(_ assignment: AIAssignment) {
+        self.assignment = assignment
+        persistConfiguration()
+    }
+
     public func updateWeChatFeed(_ url: URL) {
         if let index = feeds.firstIndex(where: { $0.id == "wechat" }) {
             feeds[index].feedURL = url
             feeds[index].configured = true
             persistConfiguration()
+        }
+    }
+
+    public func checkForUpdate() async {
+        updateState = "正在检查更新"
+        var request = URLRequest(url: ReleaseFeed.latest)
+        request.setValue("TrendingTab", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw AppUpdateError.unavailable
+            }
+            availableRelease = try ReleaseFeed.parse(data, currentVersion: currentVersion)
+            updateState = availableRelease == nil ? "已是最新版本" : "发现版本 \(availableRelease?.version ?? "")"
+        } catch {
+            availableRelease = nil
+            let detail = (error as? AppUpdateError)?.message ?? error.localizedDescription
+            updateState = "检查失败：\(detail)"
+        }
+    }
+
+    @discardableResult
+    public func installAvailableUpdate() async -> Bool {
+        guard let release = availableRelease else { return false }
+        updateState = "正在下载 \(release.version)"
+        do {
+            let (file, response) = try await URLSession.shared.download(from: release.downloadURL)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw AppUpdateError.unavailable
+            }
+            let dmg = FileManager.default.temporaryDirectory.appendingPathComponent("TrendingTab-\(release.version).dmg")
+            if FileManager.default.fileExists(atPath: dmg.path) { try FileManager.default.removeItem(at: dmg) }
+            try FileManager.default.moveItem(at: file, to: dmg)
+            defer { try? FileManager.default.removeItem(at: dmg) }
+            updateState = "正在安装"
+            await Task.yield()
+            let installed = try AppInstaller.install(
+                dmg: dmg,
+                expectedVersion: release.version,
+                expectedSHA256: release.digest
+            )
+            updateState = "安装完成，正在重新打开"
+            try AppInstaller.relaunch(installed)
+            return true
+        } catch {
+            updateState = "更新失败：\(error.localizedDescription)"
+            return false
         }
     }
 
@@ -278,6 +460,21 @@ public final class TrendingAppModel: ObservableObject {
         let destination = offset - offsets.filter { $0 < offset }.count
         result.insert(contentsOf: moving, at: max(0, min(destination, result.count)))
         return result
+    }
+
+    private func synchronizeProfileOrder() {
+        guard !profiles.isEmpty else {
+            profiles = [WidgetProfile(name: "默认", orderedTabIDs: tabs.map(\.id), defaultTabID: tabs.first?.id)]
+            return
+        }
+        profiles[0].orderedTabIDs = tabs.map(\.id)
+        if !tabs.contains(where: { $0.id == profiles[0].defaultTabID }) {
+            profiles[0].defaultTabID = tabs.first?.id
+        }
+    }
+
+    private func republishCurrentState() {
+        try? publish(statuses: snapshot?.statuses ?? [], now: .now)
     }
 
     public static func defaultTabs() -> [TabDefinition] {

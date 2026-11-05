@@ -3,14 +3,19 @@ import TrendingTabCore
 import TrendingTabKit
 import TrendingTabPersistence
 import TrendingTabSources
+import TrendingTabWidgetBridge
 
 @main
 struct TrendingTabApp: App {
+    @NSApplicationDelegateAdaptor(TrendingTabAppDelegate.self) private var appDelegate
     @StateObject private var model: TrendingAppModel
 
     init() {
         let database = try! AppDatabase.live()
-        _model = StateObject(wrappedValue: TrendingAppModel(database: database))
+        let model = TrendingAppModel(database: database)
+        model.start()
+        _model = StateObject(wrappedValue: model)
+        AppWindowRouter.shared.configure(model: model)
     }
 
     var body: some Scene {
@@ -25,8 +30,5 @@ struct TrendingTabApp: App {
             SettingsView(model: model)
         }
 
-        Window("事件中心", id: "events") {
-            EventCenterView(model: model)
-        }
     }
 }
