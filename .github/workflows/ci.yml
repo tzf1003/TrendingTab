@@ -209,7 +209,7 @@ jobs:
 
           if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ] && \
              [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
-            zsh scripts/staple-with-retry.sh "$dmg" validate
+            zsh "$GITHUB_WORKSPACE/scripts/staple-with-retry.sh" "$dmg" validate
             spctl --assess --type execute --verbose=2 "$app"
           fi
           echo "Verified $dmg"
@@ -239,7 +239,7 @@ jobs:
           "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c \
             'import json,plistlib,sys; r = json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
           if [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
-            zsh scripts/staple-with-retry.sh "$app" validate
+            zsh "$GITHUB_WORKSPACE/scripts/staple-with-retry.sh" "$app" validate
             spctl --assess --type execute "$app"
           fi
 
