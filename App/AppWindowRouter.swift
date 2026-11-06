@@ -5,14 +5,14 @@ import TrendingTabKit
 import TrendingTabWidgetBridge
 
 @MainActor
-final class AppWindowRouter {
+final class AppWindowRouter: NSObject, NSWindowDelegate {
     static let shared = AppWindowRouter()
 
     private weak var model: TrendingAppModel?
     private var eventWindowController: NSWindowController?
     private var pendingURL: URL?
 
-    private init() {}
+    private override init() { super.init() }
 
     func configure(model: TrendingAppModel) {
         self.model = model
@@ -57,6 +57,7 @@ final class AppWindowRouter {
             window.setContentSize(NSSize(width: 1380, height: 820))
             window.minSize = NSSize(width: 1100, height: 640)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.collectionBehavior = [.fullScreenPrimary]
             window.center()
             eventWindowController = NSWindowController(window: window)
@@ -64,6 +65,12 @@ final class AppWindowRouter {
 
         eventWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === eventWindowController?.window else { return }
+        model?.analysisChat.clearAll()
+        eventWindowController = nil
     }
 }
 

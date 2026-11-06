@@ -4,6 +4,12 @@ import TrendingTabCore
 
 public enum PersistenceError: Error {
     case migrationFailed(String)
+    case invalidAIRun
+    case invalidDocument
+}
+
+public enum AIRunReservation: Equatable, Sendable {
+    case reserved, duplicateUnknown, budgetExhausted
 }
 
 public final class AppDatabase: @unchecked Sendable {
@@ -73,6 +79,12 @@ public final class AppDatabase: @unchecked Sendable {
                 table.primaryKey("id", .text)
                 table.column("payload", .text).notNull()
             }
+        }
+        migrator.registerMigration("v2_ai_task_identity") { database in
+            try database.alter(table: "ai_runs") { table in
+                table.add(column: "task_key", .text)
+            }
+            try database.create(index: "ai_runs_task_state", on: "ai_runs", columns: ["task_key", "state"])
         }
         try migrator.migrate(writer)
     }
@@ -210,38 +222,83 @@ public final class AppDatabase: @unchecked Sendable {
 
     public func save(events: [EventCluster]) throws {
         try writer.write { database in
-            try database.execute(sql: "DELETE FROM events")
-            for event in events {
-                try database.execute(
-                    sql: "INSERT INTO events (id, payload, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at",
-                    arguments: [event.id.uuidString, String(data: try TrendingJSON.data(event), encoding: .utf8)!, event.updatedAt]
-                )
-            }
+            try Self.replaceEvents(events, in: database)
+        }
+    }
+
+    private static func replaceEvents(_ events: [EventCluster], in database: Database) throws {
+        try database.execute(sql: "DELETE FROM events")
+        for event in events {
+            try database.execute(sql: "INSERT INTO events (id, payload, updated_at) VALUES (?, ?, ?)",
+                arguments: [event.id.uuidString, String(data: try TrendingJSON.data(event), encoding: .utf8)!, event.updatedAt])
         }
     }
 
     public func reserveAIRun(id: UUID, tokens: Int, now: Date) throws -> Bool {
+        try reserveAIRun(id: id, tokens: tokens, now: now, taskKey: nil) == .reserved
+    }
+
+    public func reserveAIRun(id: UUID, tokens: Int, now: Date, taskKey: String?) throws -> AIRunReservation {
         try writer.write { database in
             let dayStart = Calendar.current.startOfDay(for: now)
-            let count = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE created_at >= ?", arguments: [dayStart]) ?? 0
-            let used = try Int.fetchOne(database, sql: "SELECT COALESCE(SUM(reserved_tokens), 0) FROM ai_runs WHERE created_at >= ?", arguments: [dayStart]) ?? 0
+            guard tokens > 0, let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) else { return .budgetExhausted }
+            if let taskKey {
+                let existing = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE task_key = ? AND state IN ('reserved', 'unknown-accounted')", arguments: [taskKey]) ?? 0
+                guard existing == 0 else { return .duplicateUnknown }
+            }
+            let count = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
+            let used = try Int.fetchOne(database, sql: "SELECT COALESCE(SUM(reserved_tokens), 0) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
             let settings = (try String.fetchOne(database, sql: "SELECT payload FROM documents WHERE key = ?", arguments: ["settings"])).flatMap { try? TrendingJSON.value(AppSettings.self, from: Data($0.utf8)) } ?? .standard
-            guard count < settings.dailyRequestLimit, used + tokens <= settings.dailyTokenLimit else { return false }
+            guard count < settings.dailyRequestLimit, used <= settings.dailyTokenLimit,
+                  tokens <= settings.dailyTokenLimit - used else { return .budgetExhausted }
             let payload = "{\"state\":\"reserved\"}"
-            try database.execute(sql: "INSERT INTO ai_runs (id, state, reserved_tokens, created_at, payload) VALUES (?, 'reserved', ?, ?, ?)", arguments: [id.uuidString, tokens, now, payload])
-            return true
+            try database.execute(sql: "INSERT INTO ai_runs (id, state, reserved_tokens, created_at, payload, task_key) VALUES (?, 'reserved', ?, ?, ?, ?)", arguments: [id.uuidString, tokens, now, payload, taskKey])
+            return .reserved
         }
     }
 
-    public func finishAIRun(id: UUID, state: String) throws {
+    public func finishAIRun(id: UUID, state: String, actualTokens: Int? = nil) throws {
         try writer.write { database in
-            try database.execute(sql: "UPDATE ai_runs SET state = ? WHERE id = ?", arguments: [state, id.uuidString])
+            try database.execute(sql: "UPDATE ai_runs SET state = ?, reserved_tokens = COALESCE(?, reserved_tokens) WHERE id = ? AND state = 'reserved'",
+                                 arguments: [state, actualTokens.map { max(0, $0) }, id.uuidString])
+        }
+    }
+
+    /// Results and their accounting become visible in the same SQLite transaction.
+    public func completeAIRun(id: UUID, state: String, actualTokens: Int, events: [EventCluster]? = nil,
+                              documentKey: String? = nil, documentPayload: Data? = nil) throws {
+        guard state == "completed" || state == "completed-estimated",
+              (documentKey == nil) == (documentPayload == nil) else { throw PersistenceError.invalidAIRun }
+        let payload = documentPayload.flatMap { String(data: $0, encoding: .utf8) }
+        guard documentPayload == nil || payload != nil else { throw PersistenceError.invalidAIRun }
+        try writer.write { database in
+            if let events { try Self.replaceEvents(events, in: database) }
+            if let documentKey, let payload {
+                try database.execute(sql: "INSERT INTO documents (key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload", arguments: [documentKey, payload])
+            }
+            try database.execute(sql: "UPDATE ai_runs SET state = ?, reserved_tokens = ? WHERE id = ? AND state = 'reserved'",
+                                 arguments: [state, max(0, actualTokens), id.uuidString])
+            guard database.changesCount == 1 else { throw PersistenceError.invalidAIRun }
         }
     }
 
     public func recoverUnknownAIRuns() throws -> Int {
         try writer.write { database in
             try database.execute(sql: "UPDATE ai_runs SET state = 'unknown-accounted' WHERE state = 'reserved'")
+            return database.changesCount
+        }
+    }
+
+    public func unknownAIRunCount() throws -> Int {
+        try writer.read { database in
+            try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE state = 'unknown-accounted' AND task_key IS NOT NULL") ?? 0
+        }
+    }
+
+    /// Keeps the original charge, but permits a user-requested new attempt.
+    public func acknowledgeUnknownAIRuns() throws -> Int {
+        try writer.write { database in
+            try database.execute(sql: "UPDATE ai_runs SET state = 'unknown-reviewed' WHERE state = 'unknown-accounted' AND task_key IS NOT NULL")
             return database.changesCount
         }
     }
@@ -268,10 +325,14 @@ public final class AppDatabase: @unchecked Sendable {
         }
     }
 
-    public func prune(now: Date, itemCutoff: Date? = nil) throws {
+    public func prune(now: Date, itemCutoff: Date? = nil, events: [EventCluster]? = nil, documents: [String: Data] = [:]) throws {
         let observationsCutoff = now.addingTimeInterval(-24 * 3600)
         let notificationsCutoff = now.addingTimeInterval(-30 * 24 * 3600)
         let staleItemsCutoff = itemCutoff ?? now.addingTimeInterval(-24 * 3600)
+        let payloads = try documents.mapValues { data -> String in
+            guard let value = String(data: data, encoding: .utf8) else { throw PersistenceError.invalidDocument }
+            return value
+        }
         try writer.write { database in
             try database.execute(
                 sql: "DELETE FROM items WHERE historical = 1 OR last_seen_at < ?",
@@ -279,6 +340,10 @@ public final class AppDatabase: @unchecked Sendable {
             )
             try database.execute(sql: "DELETE FROM observations WHERE fetched_at < ?", arguments: [observationsCutoff])
             try database.execute(sql: "DELETE FROM notifications WHERE created_at < ?", arguments: [notificationsCutoff])
+            if let events { try Self.replaceEvents(events, in: database) }
+            for (key, value) in payloads {
+                try database.execute(sql: "INSERT INTO documents (key, payload) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET payload = excluded.payload", arguments: [key, value])
+            }
         }
     }
 }

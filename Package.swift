@@ -26,7 +26,7 @@ let package = Package(
             dependencies: ["TrendingTabCore", .product(name: "GRDB", package: "GRDB.swift")]
         ),
         .target(name: "TrendingTabAggregation", dependencies: ["TrendingTabCore"]),
-        .target(name: "TrendingTabIntelligence", dependencies: ["TrendingTabCore", "TrendingTabNetworking", "TrendingTabSources"]),
+        .target(name: "TrendingTabIntelligence", dependencies: ["TrendingTabCore", "TrendingTabNetworking", "TrendingTabSources", "SwiftSoup"]),
         .target(name: "TrendingTabNotifications", dependencies: ["TrendingTabCore"]),
         .target(name: "TrendingTabWidgetBridge", dependencies: ["TrendingTabCore", "TrendingTabAggregation"]),
         .target(

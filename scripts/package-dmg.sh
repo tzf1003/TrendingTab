@@ -96,6 +96,8 @@ widget_bundle="$app/Contents/PlugIns/TrendingTabWidget.appex"
 widget_info="$widget_bundle/Contents/Info.plist"
 test -d "$app"
 test -d "$widget_bundle"
+runtime_dir="$app/Contents/Resources/AgentRuntime"
+zsh "$root/scripts/prepare-agent-runtime.sh" "$runtime_dir"
 
 # Preserve the application and team identities required by App Intents, and
 # remove Xcode's debugger access before signing the distribution bundles.
@@ -172,6 +174,15 @@ sign_with_retry() {
   done
   return 1
 }
+
+# Sign the embedded executables and native modules before sealing the app.
+for native_module in "$runtime_dir"/node_modules/**/*.node(N); do
+  sign_with_retry "$native_module" --force --options runtime --sign "$sign_identity" "${timestamp_args[@]}"
+done
+for node in "$runtime_dir/bin/node-arm64" "$runtime_dir/bin/node-x86_64"; do
+  sign_with_retry "$node" --force --options runtime --sign "$sign_identity" \
+    "${timestamp_args[@]}" --entitlements "$root/scripts/AgentRuntime.entitlements"
+done
 
 sign_with_retry "$widget_bundle" \
   --force \
@@ -255,8 +266,8 @@ if [[ "$signing_mode" == "developer-id" ]]; then
       echo "Apple notarization failed: ${notary_status:-submission error}." >&2
       exit 1
     fi
-    xcrun stapler staple "$dmg"
-    xcrun stapler validate "$dmg"
+    zsh "$root/scripts/staple-with-retry.sh" "$dmg"
+    zsh scripts/staple-with-retry.sh "$dmg" validate
   fi
 fi
 

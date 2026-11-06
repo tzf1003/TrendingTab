@@ -3,6 +3,7 @@
 .swiftpm/
 DerivedData/
 build/
+node_modules/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 *.sqlite

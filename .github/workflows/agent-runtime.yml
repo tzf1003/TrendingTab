@@ -1,0 +1,173 @@
+name: Agent Runtime release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Runtime version (e.g. 0.3.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-refs/heads/main
+  cancel-in-progress: false
+
+jobs:
+  runtime:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      MARKETING_VERSION: ${{ inputs.version }}
+      SIGNING_MODE: developer-id
+      DEVELOPMENT_TEAM: GJUT2BVM7R
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: AgentRuntime/package-lock.json
+      - name: Validate version and run runtime tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          zsh scripts/test-staple-retry.sh
+          [[ "$MARKETING_VERSION" =~ ^[0-9]{1,7}\.[0-9]{1,7}\.[0-9]{1,7}$ ]]
+          test "$(node -p 'require("./AgentRuntime/package.json").version')" = "$MARKETING_VERSION"
+          names="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name')"
+          if printf '%s\n' "$names" | grep -Fx "TrendingTab-AgentRuntime-$MARKETING_VERSION.dmg" >/dev/null; then
+            echo 'This runtime version is already published.' >&2
+            exit 1
+          fi
+          runtime="$RUNNER_TEMP/runtime-test"
+          zsh scripts/prepare-agent-runtime.sh "$runtime"
+          cp AgentRuntime/test-runtime.mjs AgentRuntime/test-runtime-metadata.mjs AgentRuntime/test-mcp-client.mjs AgentRuntime/test-mcp-server.mjs "$runtime/"
+          architecture="$(uname -m)"
+          (cd "$runtime" && "./bin/node-$architecture" test-runtime.mjs && "./bin/node-$architecture" test-runtime-metadata.mjs && "./bin/node-$architecture" --test test-mcp-client.mjs)
+          TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" swift test
+      - name: Import Developer ID
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_CERTIFICATE_P12"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          keychain="$RUNNER_TEMP/runtime-signing.keychain-db"
+          password="$(openssl rand -hex 24)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | /usr/bin/base64 -D > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+      - name: Configure notarization
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APPLE_PASSWORD: ${{ secrets.NOTARY_APPLE_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$NOTARY_APPLE_ID"
+          test -n "$NOTARY_APPLE_PASSWORD"
+          test "$NOTARY_TEAM_ID" = "$DEVELOPMENT_TEAM"
+          xcrun notarytool store-credentials TrendingTab-notary --apple-id "$NOTARY_APPLE_ID" --password "$NOTARY_APPLE_PASSWORD" --team-id "$NOTARY_TEAM_ID"
+          echo 'NOTARY_KEYCHAIN_PROFILE=TrendingTab-notary' >> "$GITHUB_ENV"
+      - name: Build and verify runtime
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}/runtime-release
+        run: |
+          set -euo pipefail
+          export SIGNED_UNNOTARIZED_IMAGE="$RUNNER_TEMP/runtime-negative/TrendingTab-AgentRuntime-$MARKETING_VERSION.dmg"
+          zsh scripts/package-agent-runtime.sh
+          dmg="$OUTPUT_DIR/TrendingTab-AgentRuntime-$MARKETING_VERSION.dmg"
+          test -f "$dmg"
+          hdiutil verify "$dmg"
+          zsh scripts/staple-with-retry.sh "$dmg" validate
+          architecture="$(uname -m)"
+          TRENDINGTAB_TEST_NOTARIZED_RUNTIME_DMG="$dmg" \
+          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/runtime-test/bin/node-$architecture" \
+          TRENDINGTAB_TEST_RUNTIME="$RUNNER_TEMP/runtime-test/runtime.mjs" \
+            swift test --filter AgentRuntimeManifestTests/testNotarizedRuntimeInstallAndRollback
+          test -f "$SIGNED_UNNOTARIZED_IMAGE"
+          TRENDINGTAB_TEST_SIGNED_RUNTIME_DMG="$SIGNED_UNNOTARIZED_IMAGE" \
+            swift test --filter AgentRuntimeManifestTests/testSignedImageStillRequiresNotarization
+          (cd "$OUTPUT_DIR" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256")
+      - uses: actions/upload-artifact@v7
+        with:
+          name: TrendingTab-AgentRuntime-${{ inputs.version }}
+          path: ${{ runner.temp }}/runtime-release/TrendingTab-AgentRuntime-*
+          if-no-files-found: error
+
+  verify-architectures:
+    needs: runtime
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: TrendingTab-AgentRuntime-${{ inputs.version }}
+          path: ${{ runner.temp }}/runtime-release
+      - name: Verify notarized runtime on native architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+          RUNTIME_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          cd "$RUNNER_TEMP/runtime-release"
+          dmg="TrendingTab-AgentRuntime-$RUNTIME_VERSION.dmg"
+          shasum -a 256 -c "$dmg.sha256"
+          hdiutil verify "$dmg"
+          zsh scripts/staple-with-retry.sh "$dmg" validate
+          hdiutil attach "$dmg" -readonly -nobrowse -plist > "$RUNNER_TEMP/mount.plist"
+          mountpoint="$(python3 -c 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); print(next(e["mount-point"] for e in p["system-entities"] if "mount-point" in e))' "$RUNNER_TEMP/mount.plist")"
+          trap 'hdiutil detach "$mountpoint" -quiet' EXIT
+          app="$mountpoint/AgentRuntime.app"
+          codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
+          spctl --assess --type execute "$app"
+          lipo "$app/Contents/MacOS/node" -verify_arch "$EXPECTED_ARCH"
+          "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c 'import json,plistlib,sys; r=json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
+
+  publish:
+    needs: [runtime, verify-architectures]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: TrendingTab-AgentRuntime-${{ inputs.version }}
+          path: ${{ runner.temp }}/runtime-release
+      - name: Publish runtime release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTPUT_DIR: ${{ runner.temp }}/runtime-release
+          MARKETING_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="runtime-v$MARKETING_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'This runtime version already exists.' >&2
+            exit 1
+          fi
+          dmg="$OUTPUT_DIR/TrendingTab-AgentRuntime-$MARKETING_VERSION.dmg"
+          pi_version="$(node -p 'require("./AgentRuntime/package.json").dependencies["@earendil-works/pi-coding-agent"]')"
+          [[ "$pi_version" =~ ^[0-9]{1,7}\.[0-9]{1,7}\.[0-9]{1,7}$ ]]
+          printf 'TrendingTab Agent Runtime %s。包含 Pi SDK %s，使用 Developer ID 签名并已公证。\n' "$MARKETING_VERSION" "$pi_version" > "$RUNNER_TEMP/runtime-notes.md"
+          gh release create "$tag" "$dmg" "$dmg.sha256" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "TrendingTab Agent Runtime $MARKETING_VERSION" --notes-file "$RUNNER_TEMP/runtime-notes.md" --latest=false

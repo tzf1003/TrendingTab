@@ -225,6 +225,8 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
     public var confidence: Double?
     public var category: String?
     public var summary: String?
+    /// Sources actually cited by the model, distinct from all reports in the cluster.
+    public var assessmentSourceIDs: [String]?
     public var evidenceLevel: String
     public var status: String
     public var materialFingerprint: String
@@ -240,6 +242,7 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
         confidence: Double? = nil,
         category: String? = nil,
         summary: String? = nil,
+        assessmentSourceIDs: [String]? = nil,
         evidenceLevel: String = "标题与摘要",
         status: String = "candidate",
         materialFingerprint: String,
@@ -254,6 +257,7 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
         self.confidence = confidence
         self.category = category
         self.summary = summary
+        self.assessmentSourceIDs = assessmentSourceIDs
         self.evidenceLevel = evidenceLevel
         self.status = status
         self.materialFingerprint = materialFingerprint
@@ -370,8 +374,9 @@ public struct AIConnection: Codable, Equatable, Sendable, Identifiable {
     public var credentialAccount: String
     public var timeout: TimeInterval
     public var maxOutputTokens: Int
+    public var contextWindow: Int
 
-    public init(id: UUID = UUID(), name: String, kind: AIProtocolKind, baseURL: URL, model: String, credentialAccount: String, timeout: TimeInterval = 45, maxOutputTokens: Int = 1200) {
+    public init(id: UUID = UUID(), name: String, kind: AIProtocolKind, baseURL: URL, model: String, credentialAccount: String, timeout: TimeInterval = 45, maxOutputTokens: Int = 1200, contextWindow: Int = 128_000) {
         self.id = id
         self.name = name
         self.kind = kind
@@ -380,6 +385,24 @@ public struct AIConnection: Codable, Equatable, Sendable, Identifiable {
         self.credentialAccount = credentialAccount
         self.timeout = timeout
         self.maxOutputTokens = maxOutputTokens
+        self.contextWindow = contextWindow
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, baseURL, model, credentialAccount, timeout, maxOutputTokens, contextWindow
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        kind = try values.decode(AIProtocolKind.self, forKey: .kind)
+        baseURL = try values.decode(URL.self, forKey: .baseURL)
+        model = try values.decode(String.self, forKey: .model)
+        credentialAccount = try values.decode(String.self, forKey: .credentialAccount)
+        timeout = try values.decodeIfPresent(TimeInterval.self, forKey: .timeout) ?? 45
+        maxOutputTokens = try values.decodeIfPresent(Int.self, forKey: .maxOutputTokens) ?? 1200
+        contextWindow = try values.decodeIfPresent(Int.self, forKey: .contextWindow) ?? 128_000
     }
 }
 

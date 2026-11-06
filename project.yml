@@ -70,3 +70,32 @@ targets:
         INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
         PROVISIONING_PROFILE_SPECIFIER: "$(TRENDINGTAB_WIDGET_PROFILE_ID)"
         SKIP_INSTALL: YES
+  TrendingTabBrowserTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - App/BrowserWorkspace.swift
+      - App/BrowserToolBroker.swift
+      - App/AppTheme.swift
+      - Shared/SurfacePalette.swift
+      - Tests/BrowserTests
+    dependencies:
+      - package: TrendingTabKit
+        product: TrendingTabKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.trendingtab.browser-tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  TrendingTab:
+    build:
+      targets:
+        TrendingTab: all
+  TrendingTabBrowserTests:
+    build:
+      targets:
+        TrendingTabBrowserTests: [test]
+    test:
+      targets:
+        - TrendingTabBrowserTests

@@ -14,7 +14,13 @@ public enum AlertPolicy {
         var output: [UUID: NotificationCandidate] = [:]
         for event in events where event.status == "major" {
             let matching = monitored.filter { tab in
-                !tab.blockedEventIDs.contains(event.id) && (tab.kind == .majorEvents || tab.trackedEventIDs.contains(event.id) || tab.filter.includedWords.contains { event.title.localizedCaseInsensitiveContains($0) })
+                guard !tab.blockedEventIDs.contains(event.id) else { return false }
+                if tab.kind == .majorEvents {
+                    let cited = Set(event.assessmentSourceIDs ?? [])
+                    return (event.importance ?? 0) >= tab.filter.minimumImportance && (event.confidence ?? 0) >= tab.filter.minimumConfidence &&
+                        (cited.count >= tab.filter.minimumIndependentSources || !cited.isDisjoint(with: tab.filter.authoritativeSourceIDs))
+                }
+                return tab.trackedEventIDs.contains(event.id) || tab.filter.includedWords.contains { event.title.localizedCaseInsensitiveContains($0) }
             }
             guard !matching.isEmpty else { continue }
             let fingerprint = "\(event.id.uuidString)|\(event.materialFingerprint)|\(event.importance ?? 0)".sha256Prefix

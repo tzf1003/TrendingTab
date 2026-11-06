@@ -16,8 +16,8 @@ public struct AIResult: Sendable {
     public var finishReason: String
 }
 
-public struct AIMessage: Equatable, Sendable {
-    public enum Role: String, Sendable { case user, assistant }
+public struct AIMessage: Equatable, Sendable, Encodable {
+    public enum Role: String, Sendable, Encodable { case user, assistant }
 
     public var role: Role
     public var text: String
@@ -347,14 +347,29 @@ public enum AssessmentParser {
         guard let data = text.data(using: .utf8), let root = try? JSONValues.object(data) else {
             throw SourceFailure.schemaChanged("模型输出不是 JSON")
         }
-        guard let importance = JSONValues.double(root["importance"]), let confidence = JSONValues.double(root["confidence"]), let summary = JSONValues.string(root["summary"]) else {
+        guard let importance = JSONValues.double(root["importance"]), importance.isFinite, (0...100).contains(importance),
+              let confidence = JSONValues.double(root["confidence"]), confidence.isFinite, (0...1).contains(confidence),
+              let summary = JSONValues.string(root["summary"]), !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SourceFailure.schemaChanged("模型输出缺少必要字段")
         }
-        let evidence = (root["evidenceIDs"] as? [String] ?? []).filter(allowedEvidence.contains)
-        guard evidence.count == (root["evidenceIDs"] as? [String] ?? []).count else {
+        guard let evidence = root["evidenceIDs"] as? [String], !evidence.isEmpty,
+              evidence.allSatisfy(allowedEvidence.contains) else {
             throw SourceFailure.schemaChanged("模型引用了未知证据")
         }
         let topics = (root["matchedTopicIDs"] as? [String] ?? []).compactMap(UUID.init).filter(allowedTopics.contains)
         return ModelAssessment(importance: Int(importance), confidence: confidence, category: JSONValues.string(root["category"]) ?? "未分类", summary: summary, reason: JSONValues.string(root["reason"]) ?? "", evidenceIDs: evidence, matchedTopicIDs: topics)
+    }
+
+    public static func qualifiesAsMajor(_ assessment: ModelAssessment, evidenceSources: [String: String],
+                                        authoritativeSources: Set<String>) -> Bool {
+        let citedSources = Set(assessment.evidenceIDs.compactMap { evidenceSources[$0] })
+        return qualifiesAsMajor(importance: assessment.importance, confidence: assessment.confidence,
+                                citedSources: citedSources, authoritativeSources: authoritativeSources)
+    }
+
+    public static func qualifiesAsMajor(importance: Int?, confidence: Double?, citedSources: Set<String>,
+                                        authoritativeSources: Set<String>) -> Bool {
+        (importance ?? 0) >= 75 && (confidence ?? 0) >= 0.8 &&
+            (citedSources.count >= 2 || !citedSources.isDisjoint(with: authoritativeSources))
     }
 }

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import TrendingTabCore
 import TrendingTabKit
@@ -7,12 +8,24 @@ struct EventCenterView: View {
     @ObservedObject var model: TrendingAppModel
     @State private var selectedTabID: SnapshotTab.ID?
     @State private var selectedRowID: SnapshotRow.ID?
+    @State private var openedRow: SnapshotRow?
+    @State private var missingStoryURL = false
     @State private var dismissedRevealToken: Int?
     @State private var presentedRevealToken: Int?
     @State private var unresolvedReveal = false
     @State private var revealRevision = 0
     @State private var showsChat = true
+    @State private var researchMode = false
+    @StateObject private var browserTools: BrowserToolBroker
+    @StateObject private var browser: BrowserWorkspace
     @State private var chatDrafts: [SnapshotRow.ID: String] = [:]
+
+    init(model: TrendingAppModel) {
+        self.model = model
+        let workspace = BrowserWorkspace()
+        _browser = StateObject(wrappedValue: workspace)
+        _browserTools = StateObject(wrappedValue: BrowserToolBroker(workspace: workspace, currentSnapshot: { [weak model] in model?.snapshot }))
+    }
 
     var body: some View {
         HSplitView {
@@ -25,11 +38,15 @@ struct EventCenterView: View {
             if showsChat {
                 AnalysisConversationView(
                     chat: model.analysisChat,
-                    row: displayedRow,
-                    draft: chatDraft(for: displayedRow?.id),
+                    browserTools: browserTools,
+                    row: openedRow,
+                    draft: chatDraft(for: openedRow?.id),
+                    researchMode: $researchMode,
                     hasConnection: hasAnalysisConnection,
-                    send: { text, id in model.sendChatMessage(text, itemID: id) },
-                    retry: { id in model.retryChat(itemID: id) },
+                    send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.evidence.followUpContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
+                    retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.evidence.followUpContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
+                    openSource: { missingStoryURL = false; browser.openStory($0, inNewTab: true) },
+                    endSession: { id in model.analysisChat.clear(itemID: id); browserTools.endSession(itemID: id) },
                     close: { showsChat = false }
                 )
                 .frame(minWidth: 340, idealWidth: 356, maxWidth: 400, maxHeight: .infinity)
@@ -41,6 +58,9 @@ struct EventCenterView: View {
         .onChange(of: model.pendingEventToken, initial: true) { _, _ in reconcileSelection() }
         .onChange(of: model.snapshot) { _, _ in reconcileSelection() }
         .onChange(of: model.tabs) { _, _ in reconcileSelection() }
+        .onChange(of: displayedRow?.id, initial: true) { _, _ in
+            if openedRow == nil, let row = displayedRow { openStory(row) }
+        }
     }
 
     private var tabs: [SnapshotTab] {
@@ -178,7 +198,7 @@ struct EventCenterView: View {
 
     private var feedList: some View {
         let rows = sortedRows
-        let selection = displayedRow?.id
+        let selection = openedRow?.id
         let showsRank = currentTab?.kind == .sourceBoard
         return ScrollViewReader { proxy in
             ScrollView {
@@ -246,6 +266,7 @@ struct EventCenterView: View {
         Button {
             dismissReveal()
             selectedRowID = row.id
+            openStory(row, inNewTab: NSEvent.modifierFlags.contains(.command))
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 if showsRank, let rank = row.rank {
@@ -299,8 +320,27 @@ struct EventCenterView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
             }
-            readerContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ZStack {
+                BrowserWorkspaceView(workspace: browser)
+                    .opacity(missingStoryURL ? 0 : 1)
+                    .allowsHitTesting(!missingStoryURL)
+                    .accessibilityHidden(missingStoryURL)
+                if missingStoryURL {
+                    VStack(spacing: 12) {
+                        Image(systemName: "link.badge.plus")
+                            .font(.system(size: 30))
+                            .foregroundStyle(.secondary)
+                        Text("暂无可用原文链接").font(.headline)
+                        Text("当前热点没有可打开的网页地址。")
+                            .foregroundStyle(.secondary)
+                        if !browser.tabs.isEmpty {
+                            Button("查看已打开的页面") { missingStoryURL = false }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(PaneSurface(role: .reader))
     }
@@ -371,6 +411,7 @@ struct EventCenterView: View {
         selectedTabID = id
         if changedTab { selectedRowID = nil }
         normalizeSelection()
+        if changedTab, let row = sortedRows.first(where: { $0.id == selectedRowID }) { openStory(row) }
     }
 
     private func normalizeSelection() {
@@ -435,6 +476,8 @@ struct EventCenterView: View {
         selectedTabID = tabID
         if rowID != nil || isNewRequest || changedTab { selectedRowID = rowID }
         unresolvedReveal = false
+        if isNewRequest || changedTab, let tab = tabs.first(where: { $0.id == tabID }),
+           let row = tab.rows.first(where: { $0.id == rowID }) ?? tab.rows.first { openStory(row) }
     }
 
     private func dismissReveal() {
@@ -479,11 +522,37 @@ struct EventCenterView: View {
         )
     }
 
+    private func openStory(_ row: SnapshotRow, inNewTab: Bool = false) {
+        openedRow = row
+        let candidates = [row.url, model.items.first(where: { $0.id == row.id })?.item.url]
+        if let url = candidates.compactMap({ $0 }).first(where: {
+            ["http", "https"].contains($0.scheme?.lowercased() ?? "") && $0.host != nil
+        }) {
+            missingStoryURL = false
+            browser.openStory(url, inNewTab: inNewTab)
+        } else {
+            missingStoryURL = true
+        }
+    }
+
+    private func fallbackEvidence(for itemID: String) -> String? {
+        guard let row = openedRow, row.id == itemID else { return nil }
+        return "[1] \(row.title)\n来源：\(row.sourceTitle)\n来源地址：\(row.url.map(AIVisibleAddress.string(for:)) ?? "")"
+    }
+
     private func openAnalysis(for itemID: SnapshotRow.ID) {
         showsChat = true
         let session = model.analysisChat.session(for: itemID)
         guard hasAnalysisConnection, session.messages.isEmpty, !session.isStreaming, session.error == nil else { return }
-        model.sendChatMessage(AnalysisConversationView.initialPrompt, itemID: itemID)
+        model.sendChatMessage(AnalysisConversationView.initialPrompt, itemID: itemID, evidenceFallback: fallbackEvidence(for: itemID),
+                              toolHandler: researchHandler(for: itemID), onRunFinished: { browserTools.finishRun($0) })
+    }
+
+    private func researchHandler(for itemID: String) -> AnalysisChatModel.ToolHandler? {
+        guard researchMode, model.analysisChat.supportsResearch else { return nil }
+        let title = model.items.first { $0.id == itemID }?.item.title ?? openedRow?.title ?? "热点研究"
+        let storyURL = model.items.first { $0.id == itemID }?.item.url ?? (openedRow?.id == itemID ? openedRow?.url : nil)
+        return { request, runID in try await browserTools.execute(request, runID: runID, itemID: itemID, taskTitle: title, currentStoryURL: storyURL) }
     }
 }
 
@@ -665,16 +734,38 @@ private struct AnalysisConversationView: View {
     static let initialPrompt = "这条新闻发生了什么？请整理已知事实、时间线和待确认的信息。"
 
     @ObservedObject var chat: AnalysisChatModel
+    @ObservedObject var browserTools: BrowserToolBroker
     let row: SnapshotRow?
     @Binding var draft: String
+    @Binding var researchMode: Bool
     let hasConnection: Bool
     let send: (String, SnapshotRow.ID) -> Void
     let retry: (SnapshotRow.ID) -> Void
+    let openSource: (URL) -> Void
+    let endSession: (SnapshotRow.ID) -> Void
     let close: () -> Void
+    @State private var confirmingEnd = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if chat.supportsResearch {
+                Picker("对话方式", selection: $researchMode) {
+                    Text("直接回答").tag(false)
+                    Text("深度研究").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+                if researchMode {
+                    Label("研究会使用应用内的站点登录状态。网页脚本可能未经确认发送后台请求；读取的内容会发送给所选模型。", systemImage: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
+                }
+            }
             Divider()
             if let row {
                 let session = chat.session(for: row.id)
@@ -692,6 +783,17 @@ private struct AnalysisConversationView: View {
             }
         }
         .background(PaneSurface(role: .inspector))
+        .onDisappear {
+            browserTools.resolvePermission(.deny)
+            browserTools.resolveMCPPermission(false)
+            browserTools.resolveLogin(false)
+            browserTools.resolveAction(false)
+        }
+        .confirmationDialog("结束当前对话？", isPresented: $confirmingEnd) {
+            if let row { Button("结束对话", role: .destructive) { endSession(row.id) } }
+        } message: {
+            Text("本次对话和研究材料将从内存中清除。")
+        }
     }
 
     private var header: some View {
@@ -712,6 +814,12 @@ private struct AnalysisConversationView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if let row, !chat.session(for: row.id).messages.isEmpty {
+                Button { confirmingEnd = true } label: {
+                    Label("结束对话", systemImage: "trash").labelStyle(.iconOnly)
+                        .frame(width: 30, height: 30)
+                }.buttonStyle(SelectableButtonStyle()).help("结束对话并清除研究材料")
+            }
             Button(action: close) {
                 Label("隐藏 AI 对话", systemImage: "sidebar.right")
                     .labelStyle(.iconOnly)
@@ -731,18 +839,51 @@ private struct AnalysisConversationView: View {
                     if !hasConnection {
                         configurationNotice
                     }
+                    if let permission = browserTools.permission, permission.itemID == row.id {
+                        permissionCard(permission)
+                            .id(permission.id)
+                    }
+                    if let permission = browserTools.mcpPermission, permission.itemID == row.id {
+                        mcpPermissionCard(permission)
+                            .id(permission.id)
+                    }
+                    if let login = browserTools.loginRequest, login.itemID == row.id {
+                        loginCard(login)
+                            .id(login.id)
+                    }
+                    if let action = browserTools.actionRequest, action.itemID == row.id {
+                        actionCard(action).id(action.id)
+                    }
+                    if let outcome = browserTools.actionOutcome, outcome.itemID == row.id {
+                        Label(outcome.message, systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if session.messages.isEmpty && session.error == nil {
                         intro(itemID: row.id, isStreaming: session.isStreaming)
                     }
                     ForEach(session.messages) { message in
                         if !message.text.isEmpty {
-                            messageView(message)
+                            messageView(message, itemID: row.id)
                         }
+                    }
+                    if session.modelRequests > 0 {
+                        Text("已完成请求：\(session.modelRequests) 次 · \(session.estimatedUsage ? "约 " : "")\(session.usageTokens) tokens")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if !session.activityLog.isEmpty {
+                        DisclosureGroup("研究过程（\(session.activityLog.count)）") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(Array(session.activityLog.enumerated()), id: \.offset) { _, activity in
+                                    Label(activity, systemImage: "circle.dotted")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.padding(.top, 6)
+                        }.font(.caption)
                     }
                     if session.isStreaming {
                         HStack(spacing: 7) {
                             ProgressView().controlSize(.small)
-                            Text("正在生成…")
+                            Text(session.activity ?? "正在生成…")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -781,6 +922,118 @@ private struct AnalysisConversationView: View {
             .onChange(of: session.error) { _, error in
                 if error != nil { proxy.scrollTo("conversation-bottom", anchor: .bottom) }
             }
+            .onChange(of: browserTools.permission?.id) { _, id in
+                if let id, browserTools.permission?.itemID == row.id { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onChange(of: browserTools.mcpPermission?.id) { _, id in
+                if let id, browserTools.mcpPermission?.itemID == row.id { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onChange(of: browserTools.loginRequest?.id) { _, id in
+                if let id, browserTools.loginRequest?.itemID == row.id { proxy.scrollTo(id, anchor: .center) }
+            }
+            .onChange(of: browserTools.actionRequest?.id) { _, id in
+                if let id, browserTools.actionRequest?.itemID == row.id { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    private func permissionCard(_ permission: BrowserToolBroker.PermissionRequest) -> some View {
+        CardSurface(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(permission.wantsOperation ? "申请操作用户页面" : "申请读取用户页面", systemImage: "hand.raised")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("任务：\(permission.taskTitle)").lineLimit(2).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(permission.title).lineLimit(2)
+                Text(permission.address).lineLimit(1).foregroundStyle(.secondary)
+                Text(permission.reason).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(permission.wantsOperation ? "允许后，AI 可观察和操作这个页面；通过工具执行的表单和按钮操作会逐次确认。网页自身脚本可能另行发送请求。" : "允许后，当前页面的可见文字会发送给所选模型。")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                HStack {
+                    if permission.wantsOperation {
+                        Button("本轮允许操作") { browserTools.resolvePermission(.operateForRun) }
+                        Button("仅允许读取") { browserTools.resolvePermission(.readForRun) }
+                    } else {
+                        Button("本轮允许") { browserTools.resolvePermission(.readForRun) }
+                    }
+                    Button("在 AI 标签中打开") { browserTools.resolvePermission(.openAIPage) }
+                    Button("拒绝") { browserTools.resolvePermission(.deny) }
+                }.controlSize(.small)
+            }
+        }
+    }
+
+    private func loginCard(_ login: BrowserToolBroker.LoginRequest) -> some View {
+        CardSurface(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(login.requiresAction ? "等待用户处理页面操作" : "等待登录或验证", systemImage: "person.crop.circle.badge.questionmark")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("任务：\(login.taskTitle)").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                Text(login.address).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                if let method = login.actionMethod, let address = login.actionAddress {
+                    Text("待处理操作：\(method) \(address)")
+                        .font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                    Text("打开页面后，请检查操作内容并自行决定是否提交。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                Text(login.requiresAction ? "打开页面，检查并手动处理页面操作；返回原站点后可继续研究。AI 将读取此标签当前页面的可见文字。" : "打开页面并完成验证，返回原站点后继续。AI 将读取此标签当前页面的可见文字。")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                if let message = browserTools.loginMessage { Text(message).font(.caption).foregroundStyle(.secondary) }
+                HStack {
+                    Button(login.requiresAction ? "打开页面" : "打开验证页面") { browserTools.showLoginPage() }
+                    Button("完成并继续") { browserTools.resumeAfterLogin() }
+                    Button("取消") { browserTools.resolveLogin(false) }
+                }.controlSize(.small)
+            }
+        }
+    }
+
+    private func actionCard(_ action: BrowserToolBroker.ActionRequest) -> some View {
+        CardSurface(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("确认页面操作", systemImage: "hand.raised")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("任务：\(action.taskTitle)").font(.caption).foregroundStyle(.secondary)
+                Text("页面：\(action.pageAddress)").font(.caption).textSelection(.enabled)
+                Text("按钮：\(action.title)").font(.system(size: 12, weight: .medium))
+                Text("\(action.method) \(action.destination)").font(.caption).textSelection(.enabled)
+                if !action.fields.isEmpty {
+                    Text("可见表单内容").font(.caption).foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(action.fields.enumerated()), id: \.offset) { _, field in
+                                Text(field).font(.system(size: 11)).textSelection(.enabled)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 150)
+                }
+                Text(action.method == "网页按钮" ? "确认后网页将执行此按钮及其网站脚本，请核对执行结果。" : "确认后网页将执行此按钮；隐藏字段由网站处理。提交后请核对结果。")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("确认本次操作") { browserTools.resolveAction(true) }
+                    Button("拒绝") { browserTools.resolveAction(false) }
+                }.controlSize(.small)
+            }
+        }
+    }
+
+    private func mcpPermissionCard(_ permission: BrowserToolBroker.MCPPermissionRequest) -> some View {
+        CardSurface(padding: 13) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("确认扩展工具调用", systemImage: "hand.raised")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("任务：\(permission.taskTitle)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text("服务：\(permission.serverName) · 工具：\(permission.toolName)")
+                    .font(.system(size: 12, weight: .medium)).textSelection(.enabled)
+                Text("调用参数") .font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    Text(permission.argumentsJSON).font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 150)
+                HStack {
+                    Button("允许本次调用") { browserTools.resolveMCPPermission(true) }
+                    Button("拒绝") { browserTools.resolveMCPPermission(false) }
+                }.controlSize(.small)
+            }
         }
     }
 
@@ -808,8 +1061,9 @@ private struct AnalysisConversationView: View {
         .disabled(isStreaming)
     }
 
-    private func messageView(_ message: AnalysisChatMessage) -> some View {
+    private func messageView(_ message: AnalysisChatMessage, itemID: String) -> some View {
         let isUser = if case .user = message.role { true } else { false }
+        let citations = browserTools.evidence.citations(in: message.text, itemID: itemID)
         return VStack(alignment: .leading, spacing: 6) {
             Label(isUser ? "你" : "AI", systemImage: isUser ? "person.crop.circle" : "sparkles")
                 .font(.system(size: 12, weight: .semibold))
@@ -820,6 +1074,29 @@ private struct AnalysisConversationView: View {
                 .lineSpacing(4)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
+            if !isUser && !citations.valid.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(citations.valid) { source in
+                        Button { openSource(source.url) } label: {
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("[\(source.id)]").monospaced()
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(source.title.isEmpty ? (source.url.host ?? "网页来源") : source.title)
+                                        .lineLimit(2).multilineTextAlignment(.leading)
+                                    Text("\(source.level.rawValue) · \(source.capturedAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right.square")
+                            }
+                        }.buttonStyle(.plain).foregroundStyle(AppTheme.accent)
+                    }
+                }.padding(.top, 4)
+            }
+            if !isUser && !citations.unknown.isEmpty {
+                Label("无法验证引用：\(citations.unknown.joined(separator: ", "))", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .padding(isUser ? 11 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)

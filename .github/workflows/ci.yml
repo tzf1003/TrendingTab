@@ -26,13 +26,43 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: AgentRuntime/package-lock.json
+
+      - name: Read Agent Runtime version
+        run: |
+          set -euo pipefail
+          runtime_version="$(node -p 'require("./AgentRuntime/package.json").version')"
+          [[ "$runtime_version" =~ ^[0-9]{1,7}\.[0-9]{1,7}\.[0-9]{1,7}$ ]]
+          echo "RUNTIME_VERSION=$runtime_version" >> "$GITHUB_ENV"
+
       - name: Show toolchain
         run: |
           xcodebuild -version
           swift --version
 
       - name: Test
-        run: swift test
+        run: |
+          set -euo pipefail
+          zsh scripts/test-staple-retry.sh
+          runtime="$RUNNER_TEMP/agent-runtime-test"
+          zsh scripts/prepare-agent-runtime.sh "$runtime"
+          cp AgentRuntime/test-runtime.mjs AgentRuntime/test-runtime-metadata.mjs AgentRuntime/test-mcp-client.mjs AgentRuntime/test-mcp-server.mjs "$runtime/"
+          architecture="$(uname -m)"
+          test "$architecture" = arm64 || test "$architecture" = x86_64
+          (cd "$runtime" && "./bin/node-$architecture" test-runtime.mjs)
+          (cd "$runtime" && "./bin/node-$architecture" test-runtime-metadata.mjs)
+          (cd "$runtime" && "./bin/node-$architecture" --test test-mcp-client.mjs)
+          "$runtime/bin/node-$architecture" "$runtime/runtime-health.mjs" | python3 -c \
+            'import json,sys; r = json.load(sys.stdin); p=json.load(open(sys.argv[1])); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["dependencies"]["@earendil-works/pi-coding-agent"] and "open_current_story" in r["toolNames"]' AgentRuntime/package.json
+          TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" \
+          TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" script -q /dev/null swift test
+          TEST_RUNNER_TRENDINGTAB_REQUIRE_PI_INTEGRATION=1 TEST_RUNNER_TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" TEST_RUNNER_TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" \
+          xcodebuild -project TrendingTab.xcodeproj -scheme TrendingTabBrowserTests \
+            -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 
       - name: Import signing material
         env:
@@ -123,10 +153,26 @@ jobs:
           OUTPUT_DIR: ${{ runner.temp }}/release
         run: zsh scripts/package-dmg.sh
 
+      - name: Require signed and notarized release configuration
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          test "${SIGNING_MODE:-}" = developer-id
+          test -n "${NOTARY_KEYCHAIN_PROFILE:-}"
+
+      - name: Build Agent Runtime component
+        env:
+          OUTPUT_DIR: ${{ runner.temp }}/release
+        run: |
+          set -euo pipefail
+          if [ "${SIGNING_MODE:-}" = developer-id ] && [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
+            export SIGNED_UNNOTARIZED_IMAGE="$RUNNER_TEMP/runtime-negative/TrendingTab-AgentRuntime-$RUNTIME_VERSION.dmg"
+          fi
+          MARKETING_VERSION="$RUNTIME_VERSION" zsh scripts/package-agent-runtime.sh
+
       - name: Verify DMG
         run: |
           set -euo pipefail
-          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
+          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-[0-9]*.dmg' -print -quit)"
           test -n "$dmg"
           hdiutil verify "$dmg"
 
@@ -143,6 +189,8 @@ jobs:
           test -d "$app"
           test -d "$widget"
           codesign --verify --deep --strict --verbose=2 "$app"
+          node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
+            "$app/Contents/Resources/AgentRuntime/package.json"
 
           verification_args=("$app")
           if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ]; then
@@ -161,19 +209,71 @@ jobs:
 
           if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ] && \
              [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
-            xcrun stapler validate "$dmg"
+            zsh scripts/staple-with-retry.sh "$dmg" validate
             spctl --assess --type execute --verbose=2 "$app"
           fi
           echo "Verified $dmg"
 
+      - name: Verify Agent Runtime component
+        run: |
+          set -euo pipefail
+          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-AgentRuntime-*.dmg' -print -quit)"
+          test -n "$dmg"
+          hdiutil verify "$dmg"
+          if [ "${SIGNING_MODE:-ad-hoc}" = developer-id ]; then
+            codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$dmg"
+          fi
+          if [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then zsh scripts/staple-with-retry.sh "$dmg" validate; fi
+          plist="$RUNNER_TEMP/runtime-attach.plist"
+          hdiutil attach "$dmg" -readonly -nobrowse -plist > "$plist"
+          mount="$(plutil -convert json -o - "$plist" | ruby -rjson -e 'puts JSON.parse(STDIN.read)["system-entities"].filter_map { |item| item["mount-point"] }.first')"
+          test -n "$mount"
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          app="$mount/AgentRuntime.app"
+          codesign --verify --deep --strict "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$RUNTIME_VERSION"
+          node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
+            "$app/Contents/Resources/package.json"
+          lipo "$app/Contents/MacOS/node" -verify_arch arm64
+          lipo "$app/Contents/MacOS/node" -verify_arch x86_64
+          "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c \
+            'import json,plistlib,sys; r = json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
+          if [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
+            zsh scripts/staple-with-retry.sh "$app" validate
+            spctl --assess --type execute "$app"
+          fi
+
+      - name: Exercise notarized runtime installation and rollback
+        if: env.SIGNING_MODE == 'developer-id' && env.NOTARY_KEYCHAIN_PROFILE != ''
+        run: |
+          set -euo pipefail
+          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-AgentRuntime-*.dmg' -print -quit)"
+          test -n "$dmg"
+          architecture="$(uname -m)"
+          TRENDINGTAB_TEST_NOTARIZED_RUNTIME_DMG="$dmg" \
+          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/agent-runtime-test/bin/node-$architecture" \
+          TRENDINGTAB_TEST_RUNTIME="$RUNNER_TEMP/agent-runtime-test/runtime.mjs" \
+          TRENDINGTAB_RUNTIME_DIAGNOSTICS=1 \
+            swift test --filter AgentRuntimeManifestTests/testNotarizedRuntimeInstallAndRollback
+
+      - name: Reject signed runtime image without a notarization ticket
+        if: env.SIGNING_MODE == 'developer-id' && env.NOTARY_KEYCHAIN_PROFILE != ''
+        run: |
+          set -euo pipefail
+          image="$RUNNER_TEMP/runtime-negative/TrendingTab-AgentRuntime-$RUNTIME_VERSION.dmg"
+          test -f "$image"
+          TRENDINGTAB_TEST_SIGNED_RUNTIME_DMG="$image" \
+            swift test --filter AgentRuntimeManifestTests/testSignedImageStillRequiresNotarization
+
       - name: Create checksum
         run: |
           set -euo pipefail
-          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
-          test -n "$dmg"
-          cd "$(dirname "$dmg")"
-          shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256"
-          cat "$(basename "$dmg").sha256"
+          cd "${RUNNER_TEMP}/release"
+          for dmg in TrendingTab-*.dmg; do
+            test -f "$dmg"
+            shasum -a 256 "$dmg" > "$dmg.sha256"
+            cat "$dmg.sha256"
+          done
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v7
@@ -185,45 +285,92 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  verify-runtime-intel:
+    needs: release
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: TrendingTab-DMG-${{ github.run_number }}
+          path: ${{ runner.temp }}/release
+      - name: Verify Agent Runtime on Intel
+        env:
+          RELEASE_BUILD: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          cd "$RUNNER_TEMP/release"
+          dmg="$(find . -maxdepth 1 -name 'TrendingTab-AgentRuntime-*.dmg' -print -quit)"
+          test -n "$dmg"
+          shasum -a 256 -c "$dmg.sha256"
+          hdiutil verify "$dmg"
+          if [ "$RELEASE_BUILD" = true ]; then
+            codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$dmg"
+            zsh scripts/staple-with-retry.sh "$dmg" validate
+          fi
+          hdiutil attach "$dmg" -readonly -nobrowse -plist > "$RUNNER_TEMP/runtime-intel-attach.plist"
+          mount="$(python3 -c 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); print(next(e["mount-point"] for e in p["system-entities"] if "mount-point" in e))' "$RUNNER_TEMP/runtime-intel-attach.plist")"
+          trap 'hdiutil detach "$mount" -quiet' EXIT
+          app="$mount/AgentRuntime.app"
+          codesign --verify --deep --strict "$app"
+          lipo "$app/Contents/MacOS/node" -verify_arch x86_64
+          if [ "$RELEASE_BUILD" = true ]; then
+            codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
+            zsh scripts/staple-with-retry.sh "$app" validate
+            spctl --assess --type execute "$app"
+          fi
+          "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c \
+            'import json,plistlib,sys; r = json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
+
+  publish:
+    needs: [release, verify-runtime-intel]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: TrendingTab-DMG-${{ github.run_number }}
+          path: ${{ runner.temp }}/release
       - name: Publish release
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-*.dmg' -print -quit)"
+          dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-[0-9]*.dmg' -print -quit)"
           test -n "$dmg"
+          runtime_dmg="$(find "${RUNNER_TEMP}/release" -name 'TrendingTab-AgentRuntime-*.dmg' -print -quit)"
+          test -n "$runtime_dmg"
+          (cd "$RUNNER_TEMP/release" && shasum -a 256 -c "$(basename "$dmg").sha256" && shasum -a 256 -c "$(basename "$runtime_dmg").sha256")
+          runtime_name="$(basename "$runtime_dmg")"
+          names="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name')"
           checksum="$dmg.sha256"
+          assets=("$dmg" "$checksum")
+          if ! printf '%s\n' "$names" | grep -Fx "$runtime_name" >/dev/null; then
+            assets+=("$runtime_dmg" "$runtime_dmg.sha256")
+          fi
           version="$(basename "$dmg" .dmg)"
           version="${version#TrendingTab-}"
           tag="v${version}"
 
-          if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ]; then
-            if [ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]; then
-              signing="Developer ID 签名并已公证"
-            else
-              signing="Developer ID 签名"
-            fi
-          else
-            signing="ad-hoc 签名"
-          fi
+          signing="Developer ID 签名并已公证"
 
           notes="$RUNNER_TEMP/release-notes.md"
           {
             printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
-            printf 'CI 已校验 DMG 挂载、嵌套签名、Team ID / App ID 运行身份、App Group 权限与 Widget 扩展点。安装后可在“设置 → 更新”检查并一键安装后续版本。\n\n'
-            printf '每个组件可固定显示知乎、微博等榜单；可切换组件按尺寸、起始榜单及组件编号保存选择。事件中心与设置采用统一配色，小组件使用柔和渐变背景，并提供右侧流式 AI 对话。\n'
+            printf '事件中心包含原文浏览器和流式 AI 对话，可使用应用内登录状态阅读及研究热点。支持配置模型、搜索服务和 MCP 工具。\n\n'
+            printf '提供独立 Agent Runtime 组件；可在设置中检查兼容更新并回退。CI 校验两个 DMG、签名、公证和运行时安装回退。\n'
           } > "$notes"
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$dmg" "$checksum" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit "$tag" \
               --repo "$GITHUB_REPOSITORY" \
               --title "TrendingTab ${version}" \
               --notes-file "$notes" \
               --latest
           else
-            gh release create "$tag" "$dmg" "$checksum" \
+            gh release create "$tag" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "TrendingTab ${version}" \
               --notes-file "$notes" \

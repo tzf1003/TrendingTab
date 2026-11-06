@@ -57,6 +57,8 @@ Developer ID 构建默认请求 Apple 安全时间戳，并在签名时进行有
 
 应用内“设置 → 更新”读取 GitHub Latest Release。下载后会核对版本、SHA-256、bundle identifier 和代码签名，再通过临时目录和备份完成原子替换。
 
+Agent Runtime 使用独立版本，版本来源为 `AgentRuntime/package.json`；发布前须同步更新 `package-lock.json` 的根包版本。主应用 CI 以该版本构建并验收独立组件，同一版本已有公开组件时不会重复上传。单独执行 `Agent Runtime release` 工作流时，输入版本须与这两个文件一致。每次更改随包运行时代码或依赖并准备发布组件时，应提升该版本，确保组件版本准确标识对应内容。
+
 ## 4. 本地打包
 
 本机只做安装验收时可显式使用 ad-hoc：

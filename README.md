@@ -14,6 +14,8 @@ TrendingTab 是一个 macOS 14+ 的热榜聚合应用。桌面小组件负责快
 - 设置页自动读取 GitHub 最新 Release，发现新版本后可下载并一键安装。
 - 支持 OpenAI Responses、OpenAI Chat Completions 和 Anthropic Messages。
 - 事件中心右侧提供独立 AI 对话栏，支持流式回答、连续追问、停止和重试，每条新闻保留本次运行中的会话。
+- 事件中心中栏使用内置浏览器打开原文；应用内网站登录状态可供用户浏览和 AI 研究复用。
+- 深度研究通过 Pi 运行时调用搜索、浏览器和已配置的 MCP 工具，并为阅读材料登记引用。
 - 支持连接符合 `/v1/sources` 契约的自建数据服务。
 
 ## 使用多个小组件

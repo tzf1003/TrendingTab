@@ -25,20 +25,31 @@ public enum RankFusion {
 }
 
 public enum TabAggregator {
-    public static func rows(tab: TabDefinition, items: [StoredItem], events: [EventCluster], sources: [SourceDescriptor], now: Date) -> (rows: [AggregatedRow], coverage: String) {
-        let scoped = items.filter { candidate in
+    /// The caller supplies decisions only for the current rule, model and content identity.
+    public static func scopedItems(tab: TabDefinition, items: [StoredItem], sources: [SourceDescriptor], now: Date) -> [StoredItem] {
+        let categories = Dictionary(sources.map { ($0.id, $0.category) }, uniquingKeysWith: { first, _ in first })
+        return items.filter { candidate in
             let age = now.timeIntervalSince(candidate.lastSeenAt)
             guard age <= tab.filter.timeWindow, !candidate.historical else { return false }
-            if !tab.boardIDs.isEmpty && !tab.boardIDs.contains(candidate.item.boardID) && tab.kind == .sourceBoard { return false }
+            if !tab.boardIDs.isEmpty && !tab.boardIDs.contains(candidate.item.boardID) { return false }
             if !tab.filter.sourceIDs.isEmpty && !tab.filter.sourceIDs.contains(candidate.item.sourceID) { return false }
+            if !tab.filter.categories.isEmpty {
+                guard let category = categories[candidate.item.sourceID], tab.filter.categories.contains(category) else { return false }
+            }
             let text = "\(candidate.item.title) \(candidate.item.summary ?? "")".lowercased()
             if tab.filter.excludedWords.contains(where: { text.contains($0.lowercased()) }) { return false }
             if !tab.filter.includedWords.isEmpty && !tab.filter.includedWords.contains(where: { text.contains($0.lowercased()) }) { return false }
             return true
         }
+    }
+
+    public static func rows(tab: TabDefinition, items: [StoredItem], events: [EventCluster], sources: [SourceDescriptor], now: Date, semanticDecisions: [String: Bool] = [:]) -> (rows: [AggregatedRow], coverage: String) {
+        let scoped = scopedItems(tab: tab, items: items, sources: sources, now: now)
         switch tab.kind {
         case .sourceBoard, .aggregate, .topic:
-            let rows = scoped.map { stored in
+            let semantic = tab.kind == .topic && tab.filter.semanticPrompt?.trimmedNonEmpty() != nil
+            let included = semantic ? scoped.filter { semanticDecisions[$0.id] == true } : scoped
+            let rows = included.map { stored in
                 AggregatedRow(stored: stored, score: RankFusion.score(rank: stored.item.rank, age: now.timeIntervalSince(stored.lastSeenAt)), movement: RankFusion.movement(current: stored.item.rank, previous: stored.previousRank))
             }.sorted { lhs, rhs in
                 switch tab.sort {
@@ -47,16 +58,16 @@ public enum TabAggregator {
                 case .importance, .reciprocalRankFusion: lhs.score > rhs.score
                 }
             }
-            let coverage = tab.kind == .topic && tab.filter.semanticPrompt != nil ? "规则已匹配，语义结果由 AI 队列补充" : "已覆盖当前材料"
+            let pending = semantic && scoped.contains { semanticDecisions[$0.id] == nil }
+            let coverage = pending ? "部分内容待分析" : (rows.isEmpty ? "没有匹配内容" : "已覆盖当前材料")
             return (rows, coverage)
         case .majorEvents, .trackedEvents:
             let allowed = events.filter { event in
                 if tab.blockedEventIDs.contains(event.id) { return false }
                 if tab.kind == .trackedEvents { return tab.trackedEventIDs.contains(event.id) }
-                let authoritative = event.itemIDs.contains { id in
-                    items.contains { $0.id == id && tab.filter.authoritativeSourceIDs.contains($0.item.sourceID) }
-                }
-                let passes = (event.importance ?? 0) >= tab.filter.minimumImportance && (event.confidence ?? 0) >= tab.filter.minimumConfidence && (event.independentSourceCount >= tab.filter.minimumIndependentSources || authoritative)
+                let citedSources = Set(event.assessmentSourceIDs ?? [])
+                let authoritative = !citedSources.isDisjoint(with: tab.filter.authoritativeSourceIDs)
+                let passes = (event.importance ?? 0) >= tab.filter.minimumImportance && (event.confidence ?? 0) >= tab.filter.minimumConfidence && (citedSources.count >= tab.filter.minimumIndependentSources || authoritative)
                 return event.status == "major" && passes
             }.sorted { ($0.importance ?? 0, $0.updatedAt) > ($1.importance ?? 0, $1.updatedAt) }
             let rows = allowed.compactMap { event -> AggregatedRow? in
@@ -68,9 +79,9 @@ public enum TabAggregator {
         }
     }
 
-    public static func snapshot(tabs: [TabDefinition], profiles: [WidgetProfile], items: [StoredItem], events: [EventCluster], statuses: [SourceStatus], sources: [SourceDescriptor], unread: Int, generation: Int, now: Date, lifetime: TimeInterval = 1800) -> WidgetSnapshot {
+    public static func snapshot(tabs: [TabDefinition], profiles: [WidgetProfile], items: [StoredItem], events: [EventCluster], statuses: [SourceStatus], sources: [SourceDescriptor], unread: Int, generation: Int, now: Date, lifetime: TimeInterval = 1800, semanticDecisions: [UUID: [String: Bool]] = [:]) -> WidgetSnapshot {
         let rendered = tabs.filter { !$0.hidden }.map { tab in
-            let result = rows(tab: tab, items: items, events: events, sources: sources, now: now)
+            let result = rows(tab: tab, items: items, events: events, sources: sources, now: now, semanticDecisions: semanticDecisions[tab.id] ?? [:])
             let names = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.title) })
             return SnapshotTab(
                 id: tab.id,
@@ -102,15 +113,20 @@ public enum EventGrouper {
             }) {
                 var cluster = clusters[index]
                 if !cluster.itemIDs.contains(stored.id) { cluster.itemIDs.append(stored.id) }
-                cluster.independentSourceCount = Set(cluster.itemIDs.map { $0.split(separator: ":").first.map(String.init) ?? $0 }).count
                 cluster.updatedAt = max(cluster.updatedAt, stored.lastSeenAt)
-                cluster.materialFingerprint = cluster.itemIDs.sorted().joined(separator: "|").sha256Prefix
                 clusters[index] = cluster
             } else {
                 clusters.append(EventCluster(title: stored.item.title, itemIDs: [stored.id], independentSourceCount: 1, materialFingerprint: stored.id.sha256Prefix, updatedAt: stored.lastSeenAt, createdAt: stored.firstSeenAt))
             }
         }
-        return clusters
+        let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return clusters.map { cluster in
+            var result = cluster
+            let reports = cluster.itemIDs.sorted().compactMap { byID[$0] }
+            result.independentSourceCount = Set(reports.map { $0.item.sourceID }).count
+            result.materialFingerprint = reports.map { "\($0.id)\u{0}\($0.contentHash)" }.joined(separator: "\u{0}").sha256Prefix
+            return result
+        }
     }
 
     private static func tokenize(_ title: String) -> [String] {

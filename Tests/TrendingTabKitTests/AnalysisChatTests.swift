@@ -157,6 +157,8 @@ final class AnalysisChatTests: XCTestCase {
         try await waitUntil { fixture.stoppedOpenRequests == 2 }
         XCTAssertEqual(Set(model.sessions.keys), ["a"])
         XCTAssertTrue(model.session(for: "b").messages.isEmpty)
+        model.clearAll()
+        XCTAssertTrue(model.sessions.isEmpty)
     }
 
     @MainActor

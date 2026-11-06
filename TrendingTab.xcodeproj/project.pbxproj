@@ -7,7 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		109473E30100CA632FABF0EC /* BrowserWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */; };
 		1A013A3C8449968D054632BC /* SurfacePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */; };
+		1A5F1BDCE0E1E3BE94215EE8 /* BrowserToolBroker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */; };
 		259FE23DEDF5A511EC7C7A8E /* TrendingTabWidgetBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */; };
 		2A985F7FA5733C05F23BD716 /* EventCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8916284782CEED2FD92DB4BB /* EventCenterView.swift */; };
 		2B16382781AFCAB9EEC3E98D /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA886431937937EAF8796EE /* WidgetIntents.swift */; };
@@ -16,14 +18,21 @@
 		4DF759D96EA8FE27AD98197E /* TrendingTabWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		73CDDD4BFCD03EB4AA68C207 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E40093D849855AFA5FA8ED8E /* AppIntents.framework */; };
 		7414A40F8C4BEFFC95E274AA /* WidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56E161BC5D1601D6B809991D /* WidgetBundle.swift */; };
+		75E6BF23BE6FA76DE24CDF88 /* BrowserWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E4498B272C4670EF1D067D2 /* BrowserWorkspaceTests.swift */; };
 		7A675A93F84B5F07A34C41F1 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34EBB2AE5EB4B90006262732 /* AppTheme.swift */; };
 		82ADB27394191E336171F1E5 /* AppWindowRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */; };
 		85852B0A958B8DFC26792B69 /* MenuBarMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C7A3A19C77C70ECA78ABC1 /* MenuBarMenu.swift */; };
+		9A6421D68827E7DFD9F3FD6E /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34EBB2AE5EB4B90006262732 /* AppTheme.swift */; };
+		9D3C821431C86053DD71B92F /* BrowserToolBroker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */; };
 		9E35959CA0CFE4065A6CC9FD /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA886431937937EAF8796EE /* WidgetIntents.swift */; };
 		AB069800774A9E1528006B40 /* SurfacePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */; };
+		ADB9D913FA057D3132E23777 /* BrowserWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */; };
 		B481F4348D630BB2FE587422 /* TrendingTabKit in Frameworks */ = {isa = PBXBuildFile; productRef = E7A066C04D37DC612A3B23F0 /* TrendingTabKit */; };
 		BF8884DF1A78136E5E252C6E /* WidgetSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32DF4E22199EABF29927A012 /* WidgetSurface.swift */; };
+		C19C690B6DB8E6342676444F /* TrendingTabKit in Frameworks */ = {isa = PBXBuildFile; productRef = 2A546A68427ADE37EDA09B88 /* TrendingTabKit */; };
+		CD932F17DA6F2256227FCED7 /* SurfacePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */; };
 		D320460888DCF2F0600E0FBB /* TrendingTabCore in Frameworks */ = {isa = PBXBuildFile; productRef = 323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */; };
+		E8371929D0AB3FB77158577C /* fixture-server.mjs in Resources */ = {isa = PBXBuildFile; fileRef = 01B21A1BED4F12E5FD2945D1 /* fixture-server.mjs */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,7 +60,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		01B21A1BED4F12E5FD2945D1 /* fixture-server.mjs */ = {isa = PBXFileReference; path = "fixture-server.mjs"; sourceTree = "<group>"; };
 		0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TrendingTabWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0E4498B272C4670EF1D067D2 /* BrowserWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWorkspaceTests.swift; sourceTree = "<group>"; };
+		1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserToolBroker.swift; sourceTree = "<group>"; };
 		277CFCCE03306D2A1F736345 /* TrendingTab.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TrendingTab.entitlements; sourceTree = "<group>"; };
 		30C7A3A19C77C70ECA78ABC1 /* MenuBarMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarMenu.swift; sourceTree = "<group>"; };
 		32DF4E22199EABF29927A012 /* WidgetSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSurface.swift; sourceTree = "<group>"; };
@@ -61,6 +73,7 @@
 		8390706647DE91D092AE66E0 /* TrendingTabApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendingTabApp.swift; sourceTree = "<group>"; };
 		8916284782CEED2FD92DB4BB /* EventCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventCenterView.swift; sourceTree = "<group>"; };
 		901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppWindowRouter.swift; sourceTree = "<group>"; };
+		9327F5B2D143E80985A5F901 /* TrendingTabBrowserTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrendingTabBrowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		9E30FD59D494B35EAC5FBD98 /* TrendingTab */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TrendingTab; path = .; sourceTree = SOURCE_ROOT; };
 		9EA886431937937EAF8796EE /* WidgetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetIntents.swift; sourceTree = "<group>"; };
 		B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfacePalette.swift; sourceTree = "<group>"; };
@@ -68,6 +81,7 @@
 		C1FE3AAC292509507F6B06B8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D2FF922F4A5A464DF6ADA733 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		E40093D849855AFA5FA8ED8E /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
+		E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWorkspace.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +90,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				B481F4348D630BB2FE587422 /* TrendingTabKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D0D803284E6AB872031EC00 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C19C690B6DB8E6342676444F /* TrendingTabKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -104,6 +126,7 @@
 			isa = PBXGroup;
 			children = (
 				477DDBE0273BBA540C8AB506 /* TrendingTab.app */,
+				9327F5B2D143E80985A5F901 /* TrendingTabBrowserTests.xctest */,
 				0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */,
 			);
 			name = Products;
@@ -128,6 +151,15 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		CD20C9EBA8174E6D6E93A03D /* BrowserTests */ = {
+			isa = PBXGroup;
+			children = (
+				0E4498B272C4670EF1D067D2 /* BrowserWorkspaceTests.swift */,
+				01B21A1BED4F12E5FD2945D1 /* fixture-server.mjs */,
+			);
+			path = BrowserTests;
+			sourceTree = "<group>";
+		};
 		D677B7C0E8714BD2FE7CA7AF /* Packages */ = {
 			isa = PBXGroup;
 			children = (
@@ -142,6 +174,7 @@
 				E195F38CD4FA77CC665AD395 /* App */,
 				D677B7C0E8714BD2FE7CA7AF /* Packages */,
 				C90690B2733A97E2E0386EC5 /* Shared */,
+				F63D6B431E5AB09805694912 /* Tests */,
 				944032E37A45E67F3D0B3916 /* Widget */,
 				35B41382815CD74C3770D0AF /* Frameworks */,
 				409D652531D4F8D213DB23C3 /* Products */,
@@ -153,6 +186,8 @@
 			children = (
 				34EBB2AE5EB4B90006262732 /* AppTheme.swift */,
 				901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */,
+				1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */,
+				E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */,
 				8916284782CEED2FD92DB4BB /* EventCenterView.swift */,
 				C1FE3AAC292509507F6B06B8 /* Info.plist */,
 				30C7A3A19C77C70ECA78ABC1 /* MenuBarMenu.swift */,
@@ -163,9 +198,37 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		F63D6B431E5AB09805694912 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				CD20C9EBA8174E6D6E93A03D /* BrowserTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		06CEA35D233E1CDFF8E2FE38 /* TrendingTabBrowserTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3891E0B46ACBCC5D0A805BCD /* Build configuration list for PBXNativeTarget "TrendingTabBrowserTests" */;
+			buildPhases = (
+				0D1809D2DD41843A73AFE5B6 /* Sources */,
+				430D127CC73CB6A409CDD9C6 /* Resources */,
+				6D0D803284E6AB872031EC00 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TrendingTabBrowserTests;
+			packageProductDependencies = (
+				2A546A68427ADE37EDA09B88 /* TrendingTabKit */,
+			);
+			productName = TrendingTabBrowserTests;
+			productReference = 9327F5B2D143E80985A5F901 /* TrendingTabBrowserTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		7FD23EB5D8570835248EF2A0 /* TrendingTab */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5BA16E8D67AD16703993E8D5 /* Build configuration list for PBXNativeTarget "TrendingTab" */;
@@ -216,6 +279,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					06CEA35D233E1CDFF8E2FE38 = {
+						DevelopmentTeam = GJUT2BVM7R;
+						ProvisioningStyle = Automatic;
+					};
 					7FD23EB5D8570835248EF2A0 = {
 						DevelopmentTeam = GJUT2BVM7R;
 						ProvisioningStyle = Automatic;
@@ -247,11 +314,35 @@
 			targets = (
 				7FD23EB5D8570835248EF2A0 /* TrendingTab */,
 				F61E01C823373E4B9253841A /* TrendingTabWidget */,
+				06CEA35D233E1CDFF8E2FE38 /* TrendingTabBrowserTests */,
 			);
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		430D127CC73CB6A409CDD9C6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E8371929D0AB3FB77158577C /* fixture-server.mjs in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
+		0D1809D2DD41843A73AFE5B6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A6421D68827E7DFD9F3FD6E /* AppTheme.swift in Sources */,
+				1A5F1BDCE0E1E3BE94215EE8 /* BrowserToolBroker.swift in Sources */,
+				109473E30100CA632FABF0EC /* BrowserWorkspace.swift in Sources */,
+				75E6BF23BE6FA76DE24CDF88 /* BrowserWorkspaceTests.swift in Sources */,
+				CD932F17DA6F2256227FCED7 /* SurfacePalette.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		53EFB2777E972D975D3F7C06 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -269,6 +360,8 @@
 			files = (
 				7A675A93F84B5F07A34C41F1 /* AppTheme.swift in Sources */,
 				82ADB27394191E336171F1E5 /* AppWindowRouter.swift in Sources */,
+				9D3C821431C86053DD71B92F /* BrowserToolBroker.swift in Sources */,
+				ADB9D913FA057D3132E23777 /* BrowserWorkspace.swift in Sources */,
 				2A985F7FA5733C05F23BD716 /* EventCenterView.swift in Sources */,
 				85852B0A958B8DFC26792B69 /* MenuBarMenu.swift in Sources */,
 				4236D72465C5CE772D722296 /* SettingsView.swift in Sources */,
@@ -347,6 +440,23 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		5BD92C63FB0225B6C92E061B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.trendingtab.browser-tests";
+				SDKROOT = macosx;
 			};
 			name = Release;
 		};
@@ -498,6 +608,23 @@
 			};
 			name = Debug;
 		};
+		FF915672B7901E9B543C7E9D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.trendingtab.browser-tests";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -506,6 +633,15 @@
 			buildConfigurations = (
 				CCF820A705E481B19750F6D1 /* Debug */,
 				92E8D7D952FB916E432D898A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		3891E0B46ACBCC5D0A805BCD /* Build configuration list for PBXNativeTarget "TrendingTabBrowserTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FF915672B7901E9B543C7E9D /* Debug */,
+				5BD92C63FB0225B6C92E061B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
@@ -560,6 +696,10 @@
 		23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TrendingTabWidgetBridge;
+		};
+		2A546A68427ADE37EDA09B88 /* TrendingTabKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TrendingTabKit;
 		};
 		323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */ = {
 			isa = XCSwiftPackageProductDependency;

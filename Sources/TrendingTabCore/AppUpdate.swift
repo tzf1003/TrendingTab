@@ -54,7 +54,10 @@ public enum ReleaseFeed {
         guard let object,
               let tag = object["tag_name"] as? String,
               let assets = object["assets"] as? [[String: Any]],
-              let asset = assets.first(where: { ($0["name"] as? String)?.hasSuffix(".dmg") == true }),
+              let asset = assets.first(where: {
+                  guard let name = $0["name"] as? String else { return false }
+                  return name.range(of: #"^TrendingTab-[0-9]+\.[0-9]+\.[0-9]+\.dmg$"#, options: .regularExpression) != nil
+              }),
               let name = asset["name"] as? String,
               let address = asset["browser_download_url"] as? String,
               let url = URL(string: address) else {
