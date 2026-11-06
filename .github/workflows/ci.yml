@@ -308,7 +308,7 @@ jobs:
           hdiutil verify "$dmg"
           if [ "$RELEASE_BUILD" = true ]; then
             codesign --verify --strict -R '=anchor apple generic and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$dmg"
-            zsh scripts/staple-with-retry.sh "$dmg" validate
+            zsh "$GITHUB_WORKSPACE/scripts/staple-with-retry.sh" "$dmg" validate
           fi
           hdiutil attach "$dmg" -readonly -nobrowse -plist > "$RUNNER_TEMP/runtime-intel-attach.plist"
           mount="$(python3 -c 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); print(next(e["mount-point"] for e in p["system-entities"] if "mount-point" in e))' "$RUNNER_TEMP/runtime-intel-attach.plist")"
@@ -318,7 +318,7 @@ jobs:
           lipo "$app/Contents/MacOS/node" -verify_arch x86_64
           if [ "$RELEASE_BUILD" = true ]; then
             codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
-            zsh scripts/staple-with-retry.sh "$app" validate
+            zsh "$GITHUB_WORKSPACE/scripts/staple-with-retry.sh" "$app" validate
             spctl --assess --type execute "$app"
           fi
           "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c \
