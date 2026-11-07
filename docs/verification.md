@@ -1,8 +1,16 @@
 # 验证记录
 
+2026-11-07 正式版 [v0.2.50](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.50) 对应代码提交 `7bd8aac1804c`，[CI 42371063629](https://github.com/tzf1003/TrendingTab/actions/runs/42371063629) 的构建、签名公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生检查及发布全部成功。Swift 108 项、4 项环境跳过，浏览器 73 项、2 项真实网络跳过，零意外失败；网页脚本后台 POST 边界继续保留为预期失败。
+
+实际应用 DMG SHA-256 为 `e16afaaf14859a2ff03492034d04d491a397d2b1d9d95bb526f6e402321b699e`，与发布资产 digest 和校验文件一致；本机镜像、公证票据、主应用／Widget 运行身份及双架构检查通过。随包 Runtime 0.1.6、Pi 1.5.0 在 arm64 与 Rosetta x86_64 下均通过健康检查，工具目录包含标签查询、输入和滚动。同一 CI 的独立 Runtime 镜像 SHA-256 为 `9c35fa75e3aefd42a720aab9462cc5b2bd605f00fd77df01c09aaac1bb8c41d6`，本机镜像与票据通过；同版本独立组件沿用既有发布资产。本机 Gatekeeper 仍为全局关闭，启用检查时的结果以本次 CI 为证。
+
+从实际发布镜像在 Atlas 辅助桌面启动，进程路径回读为 `/Volumes/TrendingTab/TrendingTab.app/Contents/MacOS/TrendingTab`。新标签输入 `https://example.com` 并回车后显示正文，切回原知乎标签仍为原问题地址。截图为 Atlas `runs/1794055000545569000-capture.png`。测试应用已退出，任务清理为空，镜像已卸载。主账号安装的 0.2.48 保持原状，可通过应用内更新安装此版。
+
 2026-11-07 地址栏标签路由回归：在不显示的测试窗口中先加载一个用户页，再新建空白标签并输入地址、回车。修正前，新标签的 URL 保持为空，原标签却加载了输入的地址；修正为随当前视图更新的提交处理后，新标签正常加载，原标签 URL 保持不变。定向回归共 4 项通过，同时覆盖后台页挂载、后台焦点与辅助功能隔离、阅读模式；主应用 Debug 构建通过。结果位于 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_19-53-51-+0800.xcresult`。
 
 随后在 Atlas 0.1.1 辅助桌面打开本地 Debug 构建，使用具名“网页地址”字段输入 `https://example.com` 并回车，新增用户标签显示 Example Domain 正文；切回原知乎标签，地址保持原问题链接，页面显示辅助账号自己的登录入口。两份截图为 Atlas `runs/1794053111390321000-capture.png` 和 `runs/1794053142289566000-capture.png`。这证明本构建的新标签地址提交与原标签保留；未使用主账号登录会话。测试应用已关闭，Atlas 任务清理结果为空。签名公证制品和发布另行记录。
+
+Atlas 配置完成后再次从辅助桌面输入新标签地址，页面正常渲染，原知乎标签保持原地址。关闭事件中心并通过应用重开后，临时 Example Domain 标签已清除，窗口重新显示当前热点；此次未配置辅助账号模型连接，未覆盖有对话内容时的清理。完成后退出测试应用，任务清理结果为空。Atlas 0.1.1 的签名及公证票据通过，`doctor` 返回 `ready: true`，`agents status` 回读 Codex 已连接。
 
 2026-11-07 正式版 [v0.2.48](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.48) 对应 `b6441fee9f87`，[CI 42366016839](https://github.com/tzf1003/TrendingTab/actions/runs/42366016839) 的构建、签名公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生验证和发布成功。CI Swift 共 108 项、4 项环境跳过，浏览器共 72 项、2 项真实网络跳过，零意外失败；既有网页脚本后台 POST 边界继续记录为预期失败。
 

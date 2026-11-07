@@ -2,13 +2,13 @@
 
 本清单覆盖浏览器与站点身份、Pi 模型与工具、自动任务、Runtime 更新及 macOS 分发。代码、模拟测试、真实站点及发布制品分别作为证据；记录为“待验收”的条目需要补齐对应环境中的实际结果。
 
-最近完成制品校验的正式版为 [v0.2.48](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.48)，随包 Runtime 0.1.6、Pi 1.5.0。[CI 42366016839](https://github.com/tzf1003/TrendingTab/actions/runs/42366016839) 已通过签名、公证及 Intel 原生验证。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
+最近完成制品校验的正式版为 [v0.2.50](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.50)，随包 Runtime 0.1.6、Pi 1.5.0。[CI 42371063629](https://github.com/tzf1003/TrendingTab/actions/runs/42371063629) 已通过签名、公证及 Intel 原生验证；实际发布包在 Atlas 辅助桌面完成地址栏导航检查。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
 
 ## 浏览器与站点身份
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
-| 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；阅读模式回归及正式版原文／引用打开记录；地址栏从已加载标签切换至空白标签后的回车回归，Atlas 实际输入新地址并确认原标签保持 | 基础流程已验收；地址栏标签路由修正通过本地及 Atlas 检查，分发验收另行记录 |
+| 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；阅读模式回归及正式版原文／引用打开记录；地址栏从已加载标签切换至空白标签后的回车回归，Atlas 实际输入新地址并确认原标签保持 | 基础流程已验收；地址栏标签路由修正通过本地、CI 及正式发布包的 Atlas 检查 |
 | 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由；实际固定标签后切换热点保留原页面；v0.2.47 原生 Command 点击新增一个用户标签，普通点击复用当前热点标签 | 固定、热点切换与 Command 点击实际通过 |
 | 用户／AI 两组标签与弹窗身份 | `testPopupOwnershipFollowsCurrentController`，预览与实际网页输入分别处理 | 自动回归及正式版预览通过 |
 | 稳定持久网站存储、重启／升级后登录复用 | `WKWebsiteDataStore(forIdentifier:)`；`testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances`；知乎重启与应用内更新记录 | 知乎实际通过；其他站点按下表验收 |
