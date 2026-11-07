@@ -126,7 +126,7 @@ const server = createServer(async (request, response) => {
     response.end("data: [DONE]\n\n");
     return;
   }
-  if (!body.includes("<conversation>") && !body.includes("# Conversation") && (body.includes("申请按钮") || body.includes("申请提交") || body.includes("请求工具") || body.includes("申请授权") || body.includes("等待验证") || body.includes("观察链接") || body.includes("打开链接") || body.includes("读取公开网页") || body.includes("页面内查找") || body.includes("展开区域") || body.includes("查看热榜"))) {
+  if (!body.includes("<conversation>") && !body.includes("# Conversation") && (body.includes("申请按钮") || body.includes("申请提交") || body.includes("请求工具") || body.includes("申请授权") || body.includes("等待验证") || body.includes("观察链接") || body.includes("打开链接") || body.includes("读取公开网页") || body.includes("页面内查找") || body.includes("展开区域") || body.includes("查看热榜") || body.includes("查看研究标签") || body.includes("填写输入"))) {
     const payload = JSON.parse(body);
     if (!payload.messages.some((m) => m.role === "tool")) {
       const asking = body.includes("申请授权");
@@ -139,8 +139,10 @@ const server = createServer(async (request, response) => {
       const hot = body.includes("查看热榜");
       const submit = body.includes("申请提交");
       const button = body.includes("申请按钮");
-      const name = button ? "click_ai_button" : (submit ? "submit_ai_form" : (hot ? "current_hot_topics" : (asking ? "request_user_page" : (login ? "wait_for_login" : (observe ? "observe_ai_page" : (follow ? "open_ai_page_link" : (publicArticle ? "read_public_article" : (find ? "find_ai_page" : (expand ? "expand_ai_section" : "open_ai_page")))))))));
-      const args = hot ? '{"tabID":"test-tab"}' : (asking ? '{"reason":"查看当前文章"}' : (find ? '{"tabID":"test-tab","query":"关键词"}' : ((login || observe) ? '{"tabID":"test-tab"}' : ((follow || expand || submit || button) ? '{"reference":"test-ref"}' : '{"url":"https://example.com/"}'))));
+      const listing = body.includes("查看研究标签");
+      const fill = body.includes("填写输入");
+      const name = listing ? "list_ai_pages" : fill ? "fill_ai_field" : button ? "click_ai_button" : (submit ? "submit_ai_form" : (hot ? "current_hot_topics" : (asking ? "request_user_page" : (login ? "wait_for_login" : (observe ? "observe_ai_page" : (follow ? "open_ai_page_link" : (publicArticle ? "read_public_article" : (find ? "find_ai_page" : (expand ? "expand_ai_section" : "open_ai_page")))))))));
+      const args = listing ? '{}' : fill ? '{"reference":"test-ref","text":"新闻"}' : hot ? '{"tabID":"test-tab"}' : (asking ? '{"reason":"查看当前文章"}' : (find ? '{"tabID":"test-tab","query":"关键词"}' : ((login || observe) ? '{"tabID":"test-tab"}' : ((follow || expand || submit || button) ? '{"reference":"test-ref"}' : '{"url":"https://example.com/"}'))));
       assert.ok(payload.tools.some((tool) => tool.function.name === name));
       chunk({ id: "toolmock", object: "chat.completion.chunk", created: 1, model: "mock-model", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ index: 0, id: "call1", type: "function", function: { name, arguments: args } }] }, finish_reason: null }] });
       chunk({ id: "toolmock", object: "chat.completion.chunk", created: 1, model: "mock-model", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
@@ -271,11 +273,11 @@ try {
     assert.equal((await waitFor(m => m.params?.runID === follow && ["completed", "error"].includes(m.params.type))).params.type, "completed", kind);
     assert.ok(requests.at(-1).body.tools?.length, kind);
   }
-  for (const [id, name, prompt, argument, expected] of [[27, "observe_ai_page", "观察链接", "tabID", "test-tab"], [29, "open_ai_page_link", "打开链接", "reference", "test-ref"], [36, "read_public_article", "读取公开网页", "url", "https://example.com/"], [38, "find_ai_page", "页面内查找", "query", "关键词"], [40, "expand_ai_section", "展开区域", "reference", "test-ref"], [101, "current_hot_topics", "查看热榜", "tabID", "test-tab"]]) {
+  for (const [id, name, prompt, argument, expected] of [[27, "observe_ai_page", "观察链接", "tabID", "test-tab"], [29, "open_ai_page_link", "打开链接", "reference", "test-ref"], [36, "read_public_article", "读取公开网页", "url", "https://example.com/"], [38, "find_ai_page", "页面内查找", "query", "关键词"], [40, "expand_ai_section", "展开区域", "reference", "test-ref"], [101, "current_hot_topics", "查看热榜", "tabID", "test-tab"], [111, "fill_ai_field", "填写输入", "text", "新闻"], [113, "list_ai_pages", "查看研究标签", null, null]]) {
     send({ jsonrpc: "2.0", id, method: "run", params: { runID: name, sessionID: name, connection, apiKey: "secret-for-test", prompt, tools: [name] } });
     const call = (await waitFor((m) => m.params?.runID === name && m.params.type === "tool_request")).params.toolRequest;
     assert.equal(call.name, name);
-    assert.equal(call.arguments[argument], expected);
+    if (argument) assert.equal(call.arguments[argument], expected);
     send({ jsonrpc: "2.0", id: id + 1, method: "toolResult", params: { runID: name, requestID: call.requestID, text: "页面标识 fixture" } });
     assert.equal((await waitFor((m) => m.params?.runID === name && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   }
@@ -446,6 +448,14 @@ try {
   assert.ok(!messages.some(m => m.params?.runID === "button-wait" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: "button-result", method: "toolResult", params: { runID: "button-wait", requestID: buttonRequest.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor(m => m.params?.runID === "button-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
+  send({ jsonrpc: "2.0", id: "fill-wait", method: "run", params: { runID: "fill-wait", sessionID: "fill-wait", connection,
+    apiKey: "fixture-key", prompt: "填写输入", tools: ["fill_ai_field"], limits: { maxActiveMs: 300 } } });
+  const fillRequest = (await waitFor(m => m.params?.runID === "fill-wait" && m.params.type === "tool_request")).params.toolRequest;
+  assert.equal(fillRequest.arguments.text, "新闻");
+  await delay(500);
+  assert.ok(!messages.some(m => m.params?.runID === "fill-wait" && m.params.type === "error"));
+  send({ jsonrpc: "2.0", id: "fill-result", method: "toolResult", params: { runID: "fill-wait", requestID: fillRequest.requestID, text: "页面标识 fixture" } });
+  assert.equal((await waitFor(m => m.params?.runID === "fill-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   send({ jsonrpc: "2.0", id: 25, method: "run", params: { runID: "login-wait", sessionID: "login-wait", connection,
     apiKey: "secret-for-test", prompt: "等待验证", tools: ["wait_for_login"], limits: { maxActiveMs: 300 } } });
   const login = (await waitFor((m) => m.params?.runID === "login-wait" && m.params.type === "tool_request")).params.toolRequest;

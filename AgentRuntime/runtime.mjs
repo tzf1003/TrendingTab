@@ -127,7 +127,7 @@ function hostedTools(sessionID, names, mcpServers) {
         }
       }
       const value = await requestHost(runID, run, toolCallID, name, args, signal,
-        name === "request_user_page" || name === "wait_for_login" || name === "submit_ai_form" || name === "click_ai_button");
+        name === "request_user_page" || name === "wait_for_login" || name === "submit_ai_form" || name === "click_ai_button" || name === "fill_ai_field");
       return { content: [{ type: "text", text: value }], details: {} };
     },
   }));

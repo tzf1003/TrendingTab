@@ -17,6 +17,7 @@
 | AI 后台保持用户标签 URL、焦点、位置 | `testSharedLoginAndBackgroundResearchRespectUserTab`、滚动回归；真实知乎预览与连续追问记录 | 自动回归及知乎实际通过 |
 | 用户页本轮读／操作授权，接管／导航／结束后失效 | 用户授权、导航、会话结束、迟到工具请求和操作确认测试 | 自动回归通过 |
 | AI 自主观察、读取、查找、滚动、展开、打开链接 | `BrowserToolBroker`、`tool-catalog.mjs`；整页与内层滚动；实际 Pi 工具链和知乎读取 | 自动回归及知乎实际通过 |
+| 页面查询、后台挂载、加载等待与普通输入框 | Runtime 0.1.6；`testBackgroundAgentPageStaysAttachedWhileUserReads` 及标签查询、等待、输入确认和撤权回归 | 本地回归通过；本版分发与真实页面另行验收 |
 | 提交前具体确认 | 表单及网页按钮确认、字段变化、取消、接管、导航快照回归 | 显式工具操作通过；网页脚本边界见下文 |
 
 ## Pi、工具、对话与调度

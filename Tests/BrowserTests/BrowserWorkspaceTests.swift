@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import WebKit
 import XCTest
 import TrendingTabCore
@@ -44,6 +45,148 @@ final class BrowserWorkspaceTests: XCTestCase {
         let value: [String: Any] = ["requestID": UUID().uuidString, "toolCallID": UUID().uuidString,
                                     "name": name.rawValue, "arguments": arguments]
         return try JSONDecoder().decode(AgentStreamEvent.ToolRequest.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    func testBackgroundAgentPageStaysAttachedWhileUserReads() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let user = workspace.newTab(url: base.appendingPathComponent("article"))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1024, height: 768),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace))
+        defer { window.close() }
+        try await waitUntil { user.webView.window === window }
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("article").absoluteString]),
+                                     runID: "run", itemID: "item", taskTitle: "研究")
+        let agent = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        // A retained but detached WKWebView is insufficient for dynamic pages.
+        try await waitUntil { agent.webView.window === window }
+        XCTAssertEqual(workspace.selectedID, user.id)
+        XCTAssertFalse(agent.userTookControl)
+        workspace.selectTab(agent)
+        try await waitUntil { user.webView.window === window && agent.webView.window === window }
+        XCTAssertFalse(agent.userTookControl)
+        workspace.close(agent)
+        try await waitUntil { agent.webView.window == nil }
+    }
+
+    func testAgentListsOnlyConversationPagesIncludingFollowUpsAndPopups() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("article"))
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("article").absoluteString]),
+                                     runID: "first", itemID: "conversation", taskTitle: "研究")
+        let page = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        let popup = workspace.newTab(owner: .agent, taskID: "first", url: base.appendingPathComponent("long"), select: false)
+        let other = workspace.newTab(owner: .agent, taskID: "other", url: base.appendingPathComponent("article"), select: false)
+        broker.finishRun("first")
+        let listing = try await broker.execute(request(.listAIPages), runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(listing.contains(page.id.uuidString), listing)
+        XCTAssertTrue(listing.contains(popup.id.uuidString), listing)
+        XCTAssertFalse(listing.contains(user.id.uuidString), listing)
+        XCTAssertFalse(listing.contains(other.id.uuidString), listing)
+        workspace.takeControl(page)
+        let afterTakeover = try await broker.execute(request(.listAIPages), runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(afterTakeover.contains("用户已接管"), afterTakeover)
+        broker.finishRun("follow-up")
+        let ended = try await broker.execute(request(.listAIPages), runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertEqual(ended, "任务已结束。")
+    }
+
+    func testAgentReadWaitsForOwnLoadingPageAndCancelsOnTakeover() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let tab = workspace.newTab(owner: .agent, taskID: "run", url: base.appendingPathComponent("slow"), select: false)
+        try await waitUntil { tab.webView.isLoading }
+        let reading = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]), runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(reading.contains("延迟页面"), reading)
+        tab.webView.load(URLRequest(url: base.appendingPathComponent("slow")))
+        try await waitUntil { tab.webView.isLoading }
+        let pending = Task { try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]), runID: "run", itemID: "item", taskTitle: "研究") }
+        await Task.yield()
+        workspace.takeControl(tab)
+        let takenOver = try await pending.value
+        XCTAssertTrue(takenOver.contains("用户接管"), takenOver)
+        let next = workspace.newTab(owner: .agent, taskID: "next", url: base.appendingPathComponent("slow"), select: false)
+        try await waitUntil { next.webView.isLoading }
+        let cancelled = Task { try await broker.execute(request(.readAIPage, ["tabID": next.id.uuidString]), runID: "next", itemID: "item", taskTitle: "研究") }
+        await Task.yield()
+        cancelled.cancel()
+        do { _ = try await cancelled.value; XCTFail("Read must be cancellable") } catch is CancellationError { }
+    }
+
+    func testAgentInputNeedsConfirmationAndLeavesUserPageAndSubmissionUntouched() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("article"))
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("input-search").absoluteString]),
+                                     runID: "run", itemID: "item", taskTitle: "研究")
+        let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        let observation = try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]), runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertFalse(observation.contains("fixture-private"), observation)
+        XCTAssertFalse(observation.contains("验证码"), observation)
+        XCTAssertEqual(observation.components(separatedBy: "输入框标识：").count, 2)
+        let marker = try XCTUnwrap(observation.range(of: "输入框标识："))
+        let reference = try XCTUnwrap(observation[marker.upperBound...].split(separator: "\n").first).description
+        let foreign = try await broker.execute(request(.fillAIField, ["reference": reference, "text": "另一个任务"]), runID: "other", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(foreign.contains("失效"), foreign)
+        for approved in [false, true] {
+            let task = Task { try await broker.execute(request(.fillAIField, ["reference": reference, "text": "核验报道"]), runID: "run", itemID: "item", taskTitle: "研究") }
+            try await waitUntil { broker.actionRequest != nil }
+            XCTAssertEqual(broker.actionRequest?.fields, ["核验报道"])
+            let before = try await tab.webView.evaluateJavaScript("document.querySelector('[name=q]').value") as? String
+            XCTAssertEqual(before, "")
+            broker.resolveAction(approved)
+            let result = try await task.value
+            XCTAssertTrue(result.contains(approved ? "已按确认填写" : "用户拒绝"), result)
+        }
+        let received = try await tab.webView.evaluateJavaScript("document.querySelector('#result').textContent") as? String
+        XCTAssertEqual(received, "输入事件已收到：核验报道")
+        let stale = try await broker.execute(request(.fillAIField, ["reference": reference, "text": "重复"]), runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(stale.contains("失效"), stale)
+        let (data, _) = try await URLSession.shared.data(from: base.appendingPathComponent("stats"))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: data) as? [String: Int])?["submissions"], 0)
+        XCTAssertEqual(workspace.selectedID, user.id)
+        let focus = try await tab.webView.evaluateJavaScript("document.activeElement?.tagName") as? String
+        XCTAssertEqual(focus, "BODY")
+    }
+
+    func testAgentInputApprovalExpiresOnMutationTakeoverOrCancellation() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        for mode in ["mutation", "takeover", "cancellation", "ended"] {
+            let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+            let broker = BrowserToolBroker(workspace: workspace)
+            _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("input-search").absoluteString]),
+                                         runID: "run", itemID: "item", taskTitle: "研究")
+            let tab = try XCTUnwrap(workspace.tabs.first)
+            let observation = try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]), runID: "run", itemID: "item", taskTitle: "研究")
+            let marker = try XCTUnwrap(observation.range(of: "输入框标识："))
+            let reference = try XCTUnwrap(observation[marker.upperBound...].split(separator: "\n").first).description
+            let task = Task { try await broker.execute(request(.fillAIField, ["reference": reference, "text": "不应写入"]), runID: "run", itemID: "item", taskTitle: "研究") }
+            try await waitUntil { broker.actionRequest != nil }
+            if mode == "mutation" {
+                _ = try await tab.webView.evaluateJavaScript("document.querySelector('[name=q]').outerHTML = '<input type=search name=q>'")
+            } else if mode == "takeover" { workspace.takeControl(tab) }
+            else if mode == "ended" { broker.finishRun("run") }
+            else { task.cancel() }
+            broker.resolveAction(true)
+            do {
+                let result = try await task.value
+                XCTAssertFalse(result.contains("已按确认填写"), result)
+            } catch is CancellationError { XCTAssertEqual(mode, "cancellation") }
+            let value = try await tab.webView.evaluateJavaScript("document.querySelector('[name=q]').value") as? String
+            XCTAssertEqual(value, "", mode)
+        }
     }
 
     func testContentRulesBlockBackgroundRequestsByURL() async throws {

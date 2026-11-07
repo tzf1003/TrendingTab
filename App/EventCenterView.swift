@@ -264,9 +264,7 @@ struct EventCenterView: View {
 
     private func feedRow(_ row: SnapshotRow, selected: Bool, showsRank: Bool) -> some View {
         Button {
-            dismissReveal()
-            selectedRowID = row.id
-            openStory(row, inNewTab: NSEvent.modifierFlags.contains(.command))
+            selectStory(row, inNewTab: false)
         } label: {
             HStack(alignment: .top, spacing: 8) {
                 if showsRank, let rank = row.rank {
@@ -302,7 +300,19 @@ struct EventCenterView: View {
             .padding(.vertical, 9)
         }
         .buttonStyle(SelectableButtonStyle(selected: selected))
+        .highPriorityGesture(TapGesture().modifiers(.command).onEnded {
+            selectStory(row, inNewTab: true)
+        })
+        .contextMenu {
+            Button("在新标签中打开") { selectStory(row, inNewTab: true) }
+        }
         .help(row.title)
+    }
+
+    private func selectStory(_ row: SnapshotRow, inNewTab: Bool) {
+        dismissReveal()
+        selectedRowID = row.id
+        openStory(row, inNewTab: inNewTab)
     }
 
     private var reader: some View {
@@ -1002,10 +1012,10 @@ private struct AnalysisConversationView: View {
                     .font(.system(size: 14, weight: .semibold))
                 Text("任务：\(action.taskTitle)").font(.caption).foregroundStyle(.secondary)
                 Text("页面：\(action.pageAddress)").font(.caption).textSelection(.enabled)
-                Text("按钮：\(action.title)").font(.system(size: 12, weight: .medium))
+                Text("操作：\(action.title)").font(.system(size: 12, weight: .medium))
                 Text("\(action.method) \(action.destination)").font(.caption).textSelection(.enabled)
                 if !action.fields.isEmpty {
-                    Text("可见表单内容").font(.caption).foregroundStyle(.secondary)
+                    Text("本次操作内容").font(.caption).foregroundStyle(.secondary)
                     ScrollView {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(action.fields.enumerated()), id: \.offset) { _, field in
@@ -1014,7 +1024,8 @@ private struct AnalysisConversationView: View {
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(maxHeight: 150)
                 }
-                Text(action.method == "网页按钮" ? "确认后网页将执行此按钮及其网站脚本，请核对执行结果。" : "确认后网页将执行此按钮；隐藏字段由网站处理。提交后请核对结果。")
+                Text(action.method.hasPrefix("网页输入") ? "确认后填写此输入框。站点可能在输入时发送请求；提交表单将单独确认。" :
+                    (action.method == "网页按钮" ? "确认后网页将执行此按钮及其网站脚本，请核对执行结果。" : "确认后网页将执行此按钮；隐藏字段由网站处理。提交后请核对结果。"))
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button("确认本次操作") { browserTools.resolveAction(true) }

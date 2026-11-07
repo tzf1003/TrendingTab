@@ -486,10 +486,13 @@ struct BrowserWorkspaceView: View {
             }.scrollIndicators(.hidden)
             Divider()
             if let tab = workspace.selected {
-                BrowserTabContent(workspace: workspace, tab: tab).id(tab.id)
+                BrowserTabContent(workspace: workspace, tab: tab)
             } else {
-                ContentUnavailableView("选择一条热点", systemImage: "globe", description: Text("原文将在这里打开。"))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ZStack {
+                    BrowserPageDeck(tabs: workspace.tabs, selectedID: nil).allowsHitTesting(false).accessibilityHidden(true)
+                    ContentUnavailableView("选择一条热点", systemImage: "globe", description: Text("原文将在这里打开。"))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(AppTheme.canvas)
+                }
             }
         }
     }
@@ -510,8 +513,7 @@ private struct BrowserTabContent: View {
                     .padding(8)
             }
             ZStack {
-                BrowserWebView(webView: tab.webView)
-                    .opacity(tab.showingReader ? 0 : 1)
+                BrowserPageDeck(tabs: workspace.tabs, selectedID: tab.id)
                     .allowsHitTesting(!tab.showingReader)
                     .accessibilityHidden(tab.showingReader)
                 if tab.showingReader, let content = tab.readerContent {
@@ -523,7 +525,7 @@ private struct BrowserTabContent: View {
                             Text(content.text).font(.body).textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }.frame(maxWidth: 720, alignment: .leading).padding(24)
-                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity).background(AppTheme.canvas)
                 }
             }
         }
@@ -558,12 +560,18 @@ private struct BrowserTabContent: View {
                 Image(systemName: "arrow.up.forward.square")
             }.help("在浏览器中打开")
             if tab.owner == .agent && !tab.userTookControl {
+                Text("AI 可操作").font(.caption).foregroundStyle(.secondary)
+                    .help("当前为 AI 页面预览；在网页中点击、输入或滚动会接管此页面。")
                 Button("接管此页面") { workspace.takeControl(tab) }
                     .buttonStyle(.bordered)
                     .help("停止 AI 操作并接管此页面")
+            } else if tab.owner == .agent {
+                Text("已由你接管").font(.caption).foregroundStyle(.secondary)
+                    .help("AI 可在新标签继续研究。")
             }
         }
         .buttonStyle(.borderless).padding(8)
+        .onChange(of: tab.id) { _, _ in address = tab.address }
         .onChange(of: tab.address, initial: true) { _, value in address = value }
     }
 }
@@ -587,8 +595,28 @@ private struct BrowserTabButton: View {
     }
 }
 
-private struct BrowserWebView: NSViewRepresentable {
-    let webView: WKWebView
-    func makeNSView(context: Context) -> WKWebView { webView }
-    func updateNSView(_ view: WKWebView, context: Context) {}
+/// Keep background pages in the window's view tree. Detaching an AI page until
+/// preview can suspend the rendering work used by dynamic article sites.
+private struct BrowserPageDeck: NSViewRepresentable {
+    let tabs: [BrowserWorkspace.Tab]
+    let selectedID: UUID?
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let liveViews = Set(tabs.map { ObjectIdentifier($0.webView) })
+        for child in view.subviews where !liveViews.contains(ObjectIdentifier(child)) { child.removeFromSuperview() }
+        for tab in tabs {
+            let page = tab.webView
+            if page.superview !== view {
+                page.frame = view.bounds
+                page.autoresizingMask = [.width, .height]
+                view.addSubview(page)
+            }
+            page.setAccessibilityHidden(tab.id != selectedID)
+        }
+        if let selected = tabs.first(where: { $0.id == selectedID })?.webView {
+            view.addSubview(selected, positioned: .above, relativeTo: nil)
+        }
+    }
 }

@@ -3,6 +3,19 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/input-search") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>站内搜索</title></head><body>
+      <form action="/write"><label>站内搜索<input type="search" name="q"></label><button>搜索</button></form>
+      <input type="password" aria-label="密码"><input autocomplete="one-time-code" aria-label="验证码"><input type="file">
+      <input type="hidden" name="token" value="fixture-private"><textarea name="private_token">fixture-private</textarea>
+      <input name="card_number"><input autocomplete="username"><input name="email"><input name="cvv">
+      <label>验证码<input name="code"></label><label>密码<input name="credential"></label>
+      <span id="billing">支付验证</span><input aria-labelledby="billing" name="data">
+      <article id="result">等待查询</article><script>document.querySelector('input[type=search]').addEventListener('input', event => {
+        document.querySelector('#result').textContent = '输入事件已收到：' + event.target.value;
+      });</script></body></html>`);
+    return;
+  }
   if (url.pathname === "/nested-scroll-article") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>内层滚动报道</title>
       <style>body{margin:0;overflow:hidden}#reader{height:420px;overflow-y:auto}article{min-height:2400px}</style></head><body>

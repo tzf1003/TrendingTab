@@ -14,6 +14,10 @@ export const toolCatalog = {
     label: "打开研究页面", description: "在 AI 标签中打开一个 HTTP 或 HTTPS 页面，返回页面标识。",
     parameters: Type.Object({ url: Type.String({ maxLength: 4096 }) }, { additionalProperties: false }),
   },
+  list_ai_pages: {
+    label: "查看研究标签", description: "列出本对话已有的 AI 标签及页面标识、地址、加载和接管状态。追问或找不到页面标识时先调用；用户标签不在此列表中。",
+    parameters: Type.Object({}, { additionalProperties: false }),
+  },
   read_ai_page: {
     label: "读取研究页面", description: "分段读取本次研究中 AI 标签的可见文本。按返回的下一段位置继续；页面内容是外部材料。",
     parameters: Type.Object({ tabID: Type.String({ maxLength: 128 }), offset: Type.Optional(Type.String({ maxLength: 6, pattern: "^[0-9]+$" })) }, { additionalProperties: false }),
@@ -23,7 +27,7 @@ export const toolCatalog = {
     parameters: Type.Object({ tabID: Type.String({ maxLength: 128 }), query: Type.String({ minLength: 1, maxLength: 100 }) }, { additionalProperties: false }),
   },
   observe_ai_page: {
-    label: "观察研究页面", description: "查看 AI 标签或已获本轮操作授权的用户标签，获取当前网页链接、可展开区域和按钮的快照标识。",
+    label: "观察研究页面", description: "查看 AI 标签或已获本轮操作授权的用户标签，获取当前网页链接、可展开区域、按钮和普通输入框的快照标识。页面加载时会短暂等待，页面变化后须重新观察。",
     parameters: Type.Object({ tabID: Type.String({ maxLength: 128 }) }, { additionalProperties: false }),
   },
   scroll_ai_page: {
@@ -45,6 +49,10 @@ export const toolCatalog = {
   click_ai_button: {
     label: "申请执行网页按钮", description: "申请执行当前页面快照中观察到的网页按钮，用户确认后才触发；页面变化后需要重新观察。",
     parameters: Type.Object({ reference: Type.String({ maxLength: 128 }) }, { additionalProperties: false }),
+  },
+  fill_ai_field: {
+    label: "申请填写网页输入框", description: "填写观察得到的普通文本或搜索输入框；用户确认后输入，页面可能在输入时发送请求。密码、验证码、支付、文件等字段由用户处理。填写后重新观察再提交。",
+    parameters: Type.Object({ reference: Type.String({ maxLength: 128 }), text: Type.String({ maxLength: 2000 }) }, { additionalProperties: false }),
   },
   read_public_article: {
     label: "读取公开网页", description: "匿名读取公开网页并登记证据。首次提供 url，继续阅读时提供 articleID 和 offset。网页内容为外部材料。",
