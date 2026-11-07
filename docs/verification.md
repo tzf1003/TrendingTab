@@ -1,5 +1,13 @@
 # 验证记录
 
+2026-11-07 正式版 [v0.2.42](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.42) 对应提交 `b91f76993e83`，[CI 42346445673](https://github.com/tzf1003/TrendingTab/actions/runs/42346445673) 的构建、Intel 验证和发布作业均成功。实际应用及独立 Runtime 镜像的 SHA-256 分别为 `c2fb7655a4cfd7e24319d0ac3955fd99db7dfe44385a174416d3773306558233` 和 `809c9cf050b294e58c7f453565b4c1aff3c0c99da38a72828455338fcb073f6a`，与附带校验文件及 GitHub 发布资产 digest 一致。本机镜像完整性、公证票据、应用与 Widget 运行身份、独立 Runtime 指定 Developer ID 签名均通过；应用、Widget 和 Runtime 包含 arm64、x86_64，运行时在原生与 Rosetta 下通过健康检查。两份分发包内的 Pi MIT 许可全文均与仓库文件相同，随包 Runtime 为 0.1.3、Pi 为 1.5.0。本机 `spctl` 识别为 Notarized Developer ID，同时显示 `override=security disabled`；启用 Gatekeeper 时的检查由 CI 另行执行。
+
+随后通过应用内“软件更新 → 一键更新”从 0.2.41 升级到 0.2.42，重新验证 `/Applications/TrendingTab.app` 及 Widget 的签名与运行身份；知乎已登录会话和深度研究偏好保留。再从“Agent 运行时”检查并安装 0.1.3，界面显示完成，磁盘选择为 `active: 0.1.3`、`previous: 0.1.2`；自动采集和自动分析均在界面读回开启。该 CI 的 Swift 测试为 90 项、4 项环境跳过，浏览器测试为 59 项、2 项真实网络跳过，均无意外失败；网站脚本后台 POST 的既有边界继续记录为预期失败。
+
+2026-11-07 GitHub 匿名接口限流窗口结束后，在正式版 v0.2.41 的“Agent 运行时”设置中完成实际更新：从随包 0.1.1 发现并安装独立 0.1.2，点击回退后显示 0.1.1，再次检查及安装恢复到 0.1.2。设置页显示安装完成，应用专属目录的 `selection.json` 记录 `active: 0.1.2`，安装组件元数据为 Runtime 0.1.2、Pi 1.5.0。此次是应用界面更新链路验收，与此前生产安装器的隔离回归分别记录。
+
+2026-11-07 在 `/Applications/TrendingTab.app` 的正式版 v0.2.41 补充微博页面控制验收：第一轮由 `open_current_story` 打开热点并用 `observe_ai_page` 观察；随后在前台选择该 AI 标签，第二轮继续对同一页面调用 `observe_ai_page` 成功。两轮累计 5 次模型请求、14,530 tokens，页面未因预览而转交用户。此项验证页面控制及连续观察，不代表微博或新闻站已登录身份的完整研究验收。
+
 独立 [Runtime 0.1.2](https://github.com/tzf1003/TrendingTab/releases/tag/runtime-v0.1.2) 的 [CI 42344418874](https://github.com/tzf1003/TrendingTab/actions/runs/42344418874) 通过组件构建、签名公证、安装回退及 Apple Silicon、Intel 原生检查。实际镜像 SHA-256 为 `ae4d5998586210315a63a9cb169c290cf7fc62591636009ef2f41c5589e64bd3`，与发布资产 digest 一致；本机镜像完整性、公证票据、指定 Developer ID 身份、双架构及两种架构的健康检查通过。使用实际 Node 路径执行生产安装器的安装、回退、重新安装及恢复回归通过。最初两次复测引用了不存在的测试 Node 路径，返回目录错误；有效路径下未再复现，未据此修改安装器。应用内发现组件更新的验收当时受 GitHub 匿名 API 限流影响。
 
 2026-11-07 正式版 [v0.2.41](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.41) 对应提交 `68c16eb75c7b`，[CI 42342277573](https://github.com/tzf1003/TrendingTab/actions/runs/42342277573) 通过完整测试、应用及 Runtime 签名公证、组件安装回退和 Intel 原生验证。下载制品的 SHA-256 与发布资产 digest 一致，DMG 完整性和票据校验通过；主应用、Widget 和 Runtime 为 arm64、x86_64，随包运行时在原生与 Rosetta 下通过健康检查。应用镜像 SHA-256 为 `7264686204169737525f07367fb5235e05c1e9415f79aa31be5a137833f890ef`。票据装订于 DMG，镜像中的应用没有单独装订票据；本机 `spctl` 识别为 Notarized Developer ID，同时显示 `override=security disabled`，不能单独作为启用 Gatekeeper 时的行为证明。
