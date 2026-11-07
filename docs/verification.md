@@ -1,5 +1,13 @@
 # 验证记录
 
+2026-11-07 正式版 [v0.2.48](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.48) 对应 `b6441fee9f87`，[CI 42366016839](https://github.com/tzf1003/TrendingTab/actions/runs/42366016839) 的构建、签名公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生验证和发布成功。CI Swift 共 108 项、4 项环境跳过，浏览器共 72 项、2 项真实网络跳过，零意外失败；既有网页脚本后台 POST 边界继续记录为预期失败。
+
+实际应用 DMG SHA-256 为 `c0032798071abb3b9e51e82389e1eec4156688a8ad3d7333f97b8ae120402883`，与 Release 资产 digest 及校验文件一致。本机镜像完整性、Developer ID 签名、公证票据、应用／Widget 身份及双架构检查通过；随包 Runtime 0.1.6、Pi 1.5.0 在原生 arm64 与 Rosetta x86_64 下通过健康检查，包含页面查询和输入工具。独立 Runtime 0.1.6 已随 v0.2.47 发布，本次同版本组件另经 CI 安装回退和 Intel 检查。Gatekeeper 本机仍显示全局安全检查覆盖，启用检查时行为以 CI 为证。
+
+通过应用内一键更新从 0.2.47 安装 0.2.48，磁盘版本及主应用／Widget 运行身份回读通过，知乎原文保持已登录。真实模型在自己的后台标签执行 `open_ai_page → list_ai_pages`，完成 3 次模型请求、9,299 tokens；用户知乎页仍保持选中并显示。全窗口辅助功能树仅公开当前用户页，后台 Bing 搜索框不在树中；在聊天框输入测试草稿后，值和焦点均留在聊天框，随后清空草稿。前台预览 AI 标签显示“AI 可操作”和“接管此页面”，Bing 页面及搜索框在当前页辅助功能树中可见，聊天输入焦点保持。该次验收覆盖真实页面挂载、预览、辅助功能与输入焦点；普通输入框写入和同页滚动的真实证据见下面 v0.2.47 记录。
+
+v0.2.47 另以原生 Command 点击新闻列表验证：创建一个新增用户标签并保留原标签；普通点击复用原热点标签，新增标签保持，随后关闭测试新增页。
+
 2026-11-07 正式版 [v0.2.47](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.47) 对应 `e982481ac8cb`，[CI 42363418578](https://github.com/tzf1003/TrendingTab/actions/runs/42363418578) 的构建、Intel 验证及发布成功。应用 DMG SHA-256 为 `1d6a1ad2f61c5a07a1cce6ee655d353eb684f30313ab94b49c0c77ce0c1f2927`，Runtime 0.1.6 为 `7a50f4ca25ec7d0a269d3c8958eaf88c5d2b2cedc64034939a7aa0da716234b1`；两者与 Release 资产和校验文件一致。本机镜像、签名、公证票据、应用／Widget 身份、双架构及原生／Rosetta Runtime 健康检查通过。Gatekeeper 的本机全局覆盖仍存在，启用检查时行为以 CI 为证。
 
 通过应用内一键更新安装后，设置读回应用 0.2.47、Runtime 0.1.6、Pi 1.5.0、已就绪。真实模型在自己的 Bing 标签执行 `open_ai_page → list_ai_pages → observe_ai_page → fill_ai_field`，确认卡展示公开测试文字，确认后搜索框实际值为 `TrendingTab`；用户原知乎标签保持选中及显示。前台预览 AI 标签仍显示“AI 可操作”，连续追问成功列出及滚动同一页面至约 84%；此时正文提取返回没有可读文字。两轮累计 9 次模型请求、32,822 tokens，未提交搜索。

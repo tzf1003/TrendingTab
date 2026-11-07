@@ -2,22 +2,22 @@
 
 本清单覆盖浏览器与站点身份、Pi 模型与工具、自动任务、Runtime 更新及 macOS 分发。代码、模拟测试、真实站点及发布制品分别作为证据；记录为“待验收”的条目需要补齐对应环境中的实际结果。
 
-最近已验收的正式版为 [v0.2.46](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.46)，随包 Runtime 0.1.5、Pi 1.5.0。[CI 42359154763](https://github.com/tzf1003/TrendingTab/actions/runs/42359154763) 已通过签名、公证及 Intel 原生验证。详细日期、制品哈希、真实模型调用和限制见 [验证记录](verification.md)。
+最近完成制品校验的正式版为 [v0.2.48](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.48)，随包 Runtime 0.1.6、Pi 1.5.0。[CI 42366016839](https://github.com/tzf1003/TrendingTab/actions/runs/42366016839) 已通过签名、公证及 Intel 原生验证。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
 
 ## 浏览器与站点身份
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
 | 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；`testReaderKeepsLivePageAndClearsOnNavigation`；正式版原文及引用打开记录 | 已实现；基础流程已验收 |
-| 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由；实际固定标签后切换热点保留原页面 | 固定与热点切换实际通过；Command 点击需确认原生修饰键传递 |
+| 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由；实际固定标签后切换热点保留原页面；v0.2.47 原生 Command 点击新增一个用户标签，普通点击复用当前热点标签 | 固定、热点切换与 Command 点击实际通过 |
 | 用户／AI 两组标签与弹窗身份 | `testPopupOwnershipFollowsCurrentController`，预览与实际网页输入分别处理 | 自动回归及正式版预览通过 |
 | 稳定持久网站存储、重启／升级后登录复用 | `WKWebsiteDataStore(forIdentifier:)`；`testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances`；知乎重启与应用内更新记录 | 知乎实际通过；其他站点按下表验收 |
 | 管理、清除站点数据及共享身份说明 | 浏览器设置、`clearWebsiteData`，Cookie 与站点存储清理回归 | 已实现并有测试 |
 | 登录、验证码、过期时等待与恢复 | `testCaptchaPageRequestsUserVerification`、`testLoginWaitRestoresResearchAndCancellation`、`testUserCanResumeBlockedPageWithoutNavigation` | 模拟流程通过；真实验证码由用户完成 |
-| AI 后台保持用户标签 URL、焦点、位置 | `testSharedLoginAndBackgroundResearchRespectUserTab`、滚动回归；真实知乎预览与连续追问记录 | 自动回归及知乎实际通过 |
+| AI 后台保持用户标签 URL、焦点、位置 | `testSharedLoginAndBackgroundResearchRespectUserTab`、滚动回归；真实知乎预览与连续追问记录；v0.2.48 实际后台打开 Bing 后用户页保持显示，聊天输入值与焦点保持，完整 AX 树仅公开当前页 | 自动回归与实际全窗口交互通过 |
 | 用户页本轮读／操作授权，接管／导航／结束后失效 | 用户授权、导航、会话结束、迟到工具请求和操作确认测试 | 自动回归通过 |
 | AI 自主观察、读取、查找、滚动、展开、打开链接 | `BrowserToolBroker`、`tool-catalog.mjs`；整页与内层滚动；实际 Pi 工具链和知乎读取 | 自动回归及知乎实际通过 |
-| 页面查询、后台挂载、加载等待与普通输入框 | Runtime 0.1.6；`testBackgroundAgentPageStaysAttachedWhileUserReads` 及标签查询、等待、输入确认和撤权回归 | 本地回归通过；本版分发与真实页面另行验收 |
+| 页面查询、后台挂载、加载等待与普通输入框 | Runtime 0.1.6；`testBackgroundAgentPageStaysAttachedWhileUserReads` 及标签查询、等待、输入确认和撤权回归；v0.2.47 实际模型列出 Bing 标签、确认后填写搜索框并在追问中滚动同页 | 回归、分发与普通输入框实际通过；站点正文提取仍受页面内容影响 |
 | 提交前具体确认 | 表单及网页按钮确认、字段变化、取消、接管、导航快照回归 | 显式工具操作通过；网页脚本边界见下文 |
 
 ## Pi、工具、对话与调度
@@ -43,11 +43,11 @@
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
-| 随包 Node／Pi、版本独立、双架构 | `prepare-agent-runtime.sh`；实际 v0.2.45 制品及两架构健康检查 | 已通过 |
+| 随包 Node／Pi、版本独立、双架构 | `prepare-agent-runtime.sh`；实际 v0.2.48 制品及两架构健康检查，Runtime 0.1.6、Pi 1.5.0 | 已通过 |
 | 每日检查、用户安装、版本与兼容信息 | `AppModel.prepareRuntime`、每小时到期检查循环、Runtime 设置 | 已实现；实际界面更新有记录 |
 | 发布哈希、Developer ID、票据、架构、系统／应用／协议验证 | `AgentRuntimeManifest`、Verifier、Installer；损坏、错误版本、未公证及能力缺失回归 | 已实现并有实际制品验证 |
 | 新目录健康检查、原子切换、空闲启用、上一版／启动失败回退 | Runtime 安装、回退、取消、故障恢复回归；真实设置安装回退记录 | 已通过 |
-| 签名公证应用 DMG、Widget 和独立 Runtime；Intel CI | 两份实际镜像哈希与发布资产一致；CI 构建、Intel、发布成功 | v0.2.45 已通过 |
+| 签名公证应用 DMG、Widget 和独立 Runtime；Intel CI | v0.2.48 应用镜像及 v0.2.47 发布的独立 Runtime 0.1.6 镜像哈希与资产一致；v0.2.48 CI 再次构建及检查两份镜像，Intel 和发布成功 | 已通过 |
 
 ## 真实站点与已确认边界
 
