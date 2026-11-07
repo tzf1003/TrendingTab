@@ -671,6 +671,42 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertTrue(broker.evidence.records.isEmpty)
     }
 
+    func testSearchWithoutAPIKeyUsesWebRouteAndReportsFallback() async throws {
+        for provider in [ResearchSearchProvider.brave, .tavily] {
+            var attemptedURL: URL?
+            let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: {
+                attemptedURL = $0
+                return false // Observe routing without accessing a real search engine.
+            })
+            var credentialReads = 0
+            let broker = BrowserToolBroker(workspace: workspace, searchProvider: { provider }, searchCredential: {
+                XCTAssertEqual($0, provider)
+                credentialReads += 1
+                return provider == .brave ? nil : " \n"
+            })
+            let result = try await broker.execute(request(.searchWeb, ["query": "测试新闻", "domain": "example.com", "timeRange": "day"]),
+                runID: "search", itemID: "item", taskTitle: "研究")
+            let url = try XCTUnwrap(attemptedURL)
+            XCTAssertTrue(["www.bing.com", "www.baidu.com", "www.google.com"].contains(url.host ?? ""))
+            let values = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.compactMap(\.value) ?? []
+            XCTAssertTrue(values.contains("测试新闻 site:example.com"))
+            XCTAssertEqual(credentialReads, 1)
+            XCTAssertTrue(result.contains("未配置搜索 API Key，已改用网页搜索"), result)
+            XCTAssertTrue(workspace.tabs.isEmpty)
+        }
+    }
+
+    func testExplicitWebSearchDoesNotReadAnAPICredential() async throws {
+        var attempted = false
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in attempted = true; return false })
+        let broker = BrowserToolBroker(workspace: workspace, searchProvider: { .web }, searchCredential: { _ in
+            XCTFail("Web search must not access API credentials"); return nil
+        })
+        let result = try await broker.execute(request(.searchWeb, ["query": "测试新闻"]), runID: "search", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(attempted)
+        XCTAssertFalse(result.contains("未配置搜索 API Key"), result)
+    }
+
     func testMCPToolRequiresExplicitApprovalAndCancellationClearsRequest() async throws {
         var enabled = true
         let broker = BrowserToolBroker(workspace: BrowserWorkspace(dataStore: .nonPersistent()), mcpIsEnabled: { _, _ in enabled })

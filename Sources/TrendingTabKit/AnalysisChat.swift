@@ -83,7 +83,8 @@ public final class AnalysisChatModel: ObservableObject {
     public func send(_ text: String, itemID: String, evidence: String, connection: AIConnection?, credential: String?,
                      headers: [String: String] = [:],
                      mcpServers: [AgentMCPServer] = [],
-                     toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                     toolHandler: ToolHandler? = nil, researchRestriction: String? = nil,
+                     onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
                      evidenceSnapshot: @escaping EvidenceSnapshot = { [] }) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, runs[itemID] == nil else { return }
@@ -92,16 +93,17 @@ public final class AnalysisChatModel: ObservableObject {
             state.messages.removeLast()
         }
         state.messages.append(AnalysisChatMessage(role: .user, text: question))
-        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
+        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, researchRestriction: researchRestriction, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func retry(itemID: String, evidence: String, connection: AIConnection?, credential: String?,
                       headers: [String: String] = [:],
                       mcpServers: [AgentMCPServer] = [],
-                      toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                      toolHandler: ToolHandler? = nil, researchRestriction: String? = nil,
+                      onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
                       evidenceSnapshot: @escaping EvidenceSnapshot = { [] }) {
         guard runs[itemID] == nil, let state = sessions[itemID], state.error != nil else { return }
-        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
+        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, researchRestriction: researchRestriction, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func cancel(itemID: String) {
@@ -134,9 +136,13 @@ public final class AnalysisChatModel: ObservableObject {
     }
 
     private func start(_ current: AnalysisChatSession, itemID: String, evidence: String,
-                       connection: AIConnection?, credential: String?, headers: [String: String], mcpServers: [AgentMCPServer], toolHandler: ToolHandler?,
+                       connection: AIConnection?, credential: String?, headers: [String: String], mcpServers: [AgentMCPServer], toolHandler: ToolHandler?, researchRestriction: String?,
                        onRunFinished: (@MainActor @Sendable (String) -> Void)?, evidenceSnapshot: @escaping EvidenceSnapshot) {
         var state = current
+        if toolHandler != nil, let researchRestriction {
+            configurationError(researchRestriction, itemID: itemID, state: state)
+            return
+        }
         guard let connection else {
             configurationError("请先配置用于新闻分析的 AI 连接。", itemID: itemID, state: state)
             return

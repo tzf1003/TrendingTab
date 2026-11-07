@@ -608,6 +608,15 @@ struct SettingsView: View {
                             Divider()
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("\(connection.name) · \(connection.model)").fontWeight(.medium)
+                                if let capability = model.toolCapabilities[connection.id] {
+                                    Label(capability.state == .verified ? "工具调用已通过" : "工具调用未通过 · 可使用直接回答",
+                                          systemImage: capability.state == .verified ? "checkmark.circle" : "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .help("测试时间：\(capability.checkedAt.formatted(date: .abbreviated, time: .shortened))")
+                                } else {
+                                    Text("工具调用待测试").font(.caption).foregroundStyle(.secondary)
+                                }
                                 HStack {
                                     Button("测试流式") { testConnection(connection.id, kind: .streaming) }
                                     Button("测试结构化输出") { testConnection(connection.id, kind: .structured) }

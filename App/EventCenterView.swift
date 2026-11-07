@@ -43,6 +43,7 @@ struct EventCenterView: View {
                     draft: chatDraft(for: openedRow?.id),
                     researchMode: $researchMode,
                     hasConnection: hasAnalysisConnection,
+                    researchRestriction: model.researchUnavailableReason,
                     send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }, evidenceSnapshot: evidenceSnapshot(for: id)) },
                     retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }, evidenceSnapshot: evidenceSnapshot(for: id)) },
                     openSource: { missingStoryURL = false; browser.openStory($0, inNewTab: true) },
@@ -753,6 +754,7 @@ private struct AnalysisConversationView: View {
     @Binding var draft: String
     @Binding var researchMode: Bool
     let hasConnection: Bool
+    let researchRestriction: String?
     let send: (String, SnapshotRow.ID) -> Void
     let retry: (SnapshotRow.ID) -> Void
     let openSource: (URL) -> Void
@@ -772,6 +774,13 @@ private struct AnalysisConversationView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
                 if researchMode {
+                    if let researchRestriction {
+                        Label(researchRestriction, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 10)
+                    }
                     Label("研究会使用应用内的站点登录状态。网页脚本可能未经确认发送后台请求；读取的内容会发送给所选模型。", systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -850,6 +859,8 @@ private struct AnalysisConversationView: View {
         .padding(.vertical, 12)
     }
 
+    private var researchBlocked: Bool { researchMode && researchRestriction != nil }
+
     private func transcript(row: SnapshotRow, session: AnalysisChatSession) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -916,6 +927,7 @@ private struct AnalysisConversationView: View {
                             if hasConnection && !session.isStreaming {
                                 Button("重试", systemImage: "arrow.clockwise") { retry(row.id) }
                                     .buttonStyle(.bordered)
+                                    .disabled(researchBlocked)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1126,6 +1138,7 @@ private struct AnalysisConversationView: View {
     private func promptButton(_ title: String, prompt: String, itemID: SnapshotRow.ID) -> some View {
         Button(title) { send(prompt, itemID) }
             .buttonStyle(.bordered)
+            .disabled(researchBlocked)
     }
 
     private func composer(itemID: SnapshotRow.ID, isStreaming: Bool) -> some View {
@@ -1156,7 +1169,7 @@ private struct AnalysisConversationView: View {
                     }
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
-                    .disabled(!hasConnection || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!hasConnection || researchBlocked || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("发送（⌘↩）")
                 }
             }

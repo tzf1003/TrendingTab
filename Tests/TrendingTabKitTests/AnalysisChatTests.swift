@@ -12,6 +12,27 @@ private final class EvidenceSnapshotFixture {
 
 final class AnalysisChatTests: XCTestCase {
     @MainActor
+    func testFailedToolCheckAllowsDirectAnswerAndRetryAfterRetesting() async throws {
+        let fixture = ChatFixture([.init(Self.chat("直接回答")), .init(Self.chat("重新测试后的回答"))])
+        let model = AnalysisChatModel(session: fixture.session)
+        let connection = Self.connection(.openAIChat, fixture)
+        model.send("直接问题", itemID: "direct", evidence: "材料", connection: connection, credential: "fixture",
+                   researchRestriction: "工具调用未通过")
+        try await waitUntil { !model.session(for: "direct").isStreaming }
+        XCTAssertEqual(model.session(for: "direct").messages.last?.text, "直接回答")
+        model.send("研究问题", itemID: "research", evidence: "材料", connection: connection, credential: "fixture",
+                   toolHandler: { _, _ in "" }, researchRestriction: "工具调用未通过")
+        model.retry(itemID: "research", evidence: "材料", connection: connection, credential: "fixture",
+                    toolHandler: { _, _ in "" }, researchRestriction: "工具调用未通过")
+        XCTAssertEqual(fixture.requests.count, 1)
+        XCTAssertEqual(model.session(for: "research").messages.map(\.text), ["研究问题"])
+        model.retry(itemID: "research", evidence: "材料", connection: connection, credential: "fixture",
+                    toolHandler: { _, _ in "" })
+        try await waitUntil { !model.session(for: "research").isStreaming }
+        XCTAssertEqual(model.session(for: "research").messages.map(\.text), ["研究问题", "重新测试后的回答"])
+    }
+
+    @MainActor
     func testFollowUpEvidenceCannotValidateEarlierAnswer() async throws {
         let fixture = ChatFixture([.init(Self.chat("尚未读取的材料 [E1]")), .init(Self.chat("已读取的材料 [E1]"))])
         let model = AnalysisChatModel(session: fixture.session)

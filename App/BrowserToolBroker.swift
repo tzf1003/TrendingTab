@@ -70,6 +70,8 @@ final class BrowserToolBroker: ObservableObject {
     private let workspace: BrowserWorkspace
     private let currentSnapshot: () -> WidgetSnapshot?
     private let mcpIsEnabled: (String, String) -> Bool
+    private let searchProvider: () -> ResearchSearchProvider
+    private let searchCredential: (ResearchSearchProvider) -> String?
     private let publicArticleReader: @Sendable (URL) async throws -> PublicArticle
     private var busyTabs: Set<UUID> = []
     private var loadingCount = 0
@@ -293,6 +295,10 @@ final class BrowserToolBroker: ObservableObject {
 
     init(workspace: BrowserWorkspace, currentSnapshot: @escaping () -> WidgetSnapshot? = { nil },
          publicArticleReader: @escaping @Sendable (URL) async throws -> PublicArticle = { try await PublicArticleService().read($0) },
+         searchProvider: @escaping () -> ResearchSearchProvider = {
+             ResearchSearchProvider(rawValue: UserDefaults.standard.string(forKey: "research.search.provider") ?? "web") ?? .web
+         },
+         searchCredential: @escaping (ResearchSearchProvider) -> String? = { KeychainStore.read(account: "research-search-\($0.rawValue)") },
          mcpIsEnabled: @escaping (String, String) -> Bool = { serverID, toolName in
         MCPConfigurationStore.load().contains { $0.id == serverID && $0.enabled && $0.server.enabledTools.contains(toolName) }
     }) {
@@ -300,6 +306,8 @@ final class BrowserToolBroker: ObservableObject {
         self.currentSnapshot = currentSnapshot
         self.publicArticleReader = publicArticleReader
         self.mcpIsEnabled = mcpIsEnabled
+        self.searchProvider = searchProvider
+        self.searchCredential = searchCredential
         authoritySubscription = workspace.authorityChanges.sink { [weak self] in
             MainActor.assumeIsolated { self?.revokeInvalidUserGrants() }
         }
@@ -385,10 +393,10 @@ final class BrowserToolBroker: ObservableObject {
             if let domain = request.arguments["domain"], !domain.isEmpty, search.domain == nil {
                 return "站点范围无效，请填写域名。"
             }
-            let provider = ResearchSearchProvider(rawValue: UserDefaults.standard.string(forKey: "research.search.provider") ?? "web") ?? .web
-            if provider != .web {
+            let provider = searchProvider()
+            let key = provider == .web ? nil : searchCredential(provider)
+            if provider != .web, let key, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 do {
-                    let key = KeychainStore.read(account: "research-search-\(provider.rawValue)") ?? ""
                     let results = try await ResearchSearchService().search(provider: provider, credential: key, request: search)
                     try Task.checkCancellation()
                     guard !endedRuns.contains(runID) else { return "任务已结束。" }
@@ -397,6 +405,7 @@ final class BrowserToolBroker: ObservableObject {
                 catch { return (error as? LocalizedError)?.errorDescription ?? "搜索失败，请检查网络连接。" }
             }
             let engine = ResearchWebSearch.Engine(rawValue: UserDefaults.standard.string(forKey: "research.search.engine") ?? "bing") ?? .bing
+            let fallbackNotice = provider == .web ? "" : "未配置搜索 API Key，已改用网页搜索。\n"
             do {
                 let destination = try ResearchWebSearch.destination(engine: engine, request: search)
                 let tab = try await openPage(destination.url, runID: runID)
@@ -404,10 +413,10 @@ final class BrowserToolBroker: ObservableObject {
                 if topic == .news {
                     results = "当前使用通用网页搜索查找新闻；专门的新闻索引需要在设置中配置 Brave 或 Tavily。\n" + results
                 }
-                if search.timeRange != nil && !destination.timeFilterRequested { return "当前网页搜索未应用时间筛选，请核对发布时间。\n\(results)" }
-                if destination.timeFilterRequested { return "已请求搜索引擎按时间筛选，请核对来源的实际发布时间。\n\(results)" }
-                return results
-            } catch let error as PageError { return error.localizedDescription }
+                if search.timeRange != nil && !destination.timeFilterRequested { return fallbackNotice + "当前网页搜索未应用时间筛选，请核对发布时间。\n\(results)" }
+                if destination.timeFilterRequested { return fallbackNotice + "已请求搜索引擎按时间筛选，请核对来源的实际发布时间。\n\(results)" }
+                return fallbackNotice + results
+            } catch let error as PageError { return fallbackNotice + error.localizedDescription }
 
         case AgentToolName.openSearchResult.rawValue:
             guard let rawID = request.arguments["resultID"], let result = searchResult(rawID, runID: runID) else {

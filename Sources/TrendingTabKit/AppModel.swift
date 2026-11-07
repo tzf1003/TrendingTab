@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import TrendingTabAggregation
 import TrendingTabCore
@@ -51,6 +52,7 @@ public final class TrendingAppModel: ObservableObject {
     @Published public private(set) var unknownAutomaticRuns = 0
     @Published public private(set) var connections: [AIConnection] = []
     @Published public private(set) var assignment: AIAssignment = .empty
+    @Published public private(set) var toolCapabilities: [UUID: ModelToolCapability] = [:]
     @Published public private(set) var feeds: [FeedSource] = []
     @Published public private(set) var snapshot: WidgetSnapshot?
     @Published public private(set) var running = false
@@ -84,6 +86,8 @@ public final class TrendingAppModel: ObservableObject {
     private var headerReader: (String) -> String? = { KeychainStore.read(account: $0) }
     private var headerWriter: (String, String) -> Bool = { KeychainStore.save($1, account: $0) }
     private var credentialWriter: (String, String) -> Bool = { KeychainStore.save($1, account: $0) }
+    typealias ConnectionTester = @MainActor @Sendable (AgentConnectionTest, AIConnection, String, [String: String]) async throws -> String
+    private let connectionTester: ConnectionTester?
     private var automaticProvider: ((AIConnection, String) -> any AIProvider)?
     private let automaticArticleReader: AutomaticSummaryMaterial.ArticleReader
     private let cache = ConditionalCache()
@@ -116,7 +120,8 @@ public final class TrendingAppModel: ObservableObject {
          automaticArticleReader: @escaping AutomaticSummaryMaterial.ArticleReader = { try await PublicArticleService().read($0) },
          headerReader: @escaping (String) -> String? = { KeychainStore.read(account: $0) },
          headerWriter: @escaping (String, String) -> Bool = { KeychainStore.save($1, account: $0) },
-         credentialWriter: @escaping (String, String) -> Bool = { KeychainStore.save($1, account: $0) }) {
+         credentialWriter: @escaping (String, String) -> Bool = { KeychainStore.save($1, account: $0) },
+         connectionTester: ConnectionTester? = nil) {
         self.database = database
         self.transport = transport
         self.agentBridge = agentBridge
@@ -128,6 +133,7 @@ public final class TrendingAppModel: ObservableObject {
         self.headerReader = headerReader
         self.headerWriter = headerWriter
         self.credentialWriter = credentialWriter
+        self.connectionTester = connectionTester
         self.analysisChat = agentBridge.map { AnalysisChatModel(agentBridge: $0) } ?? AnalysisChatModel()
         load()
         Task { await checkForUpdate() }
@@ -792,12 +798,58 @@ public final class TrendingAppModel: ObservableObject {
     }
 
     public func testConnection(_ id: UUID, kind: AgentConnectionTest) async throws -> String {
-        guard let agentBridge else { throw SourceFailure.unavailable("Agent 运行时不可用。") }
         guard let connection = connections.first(where: { $0.id == id }),
-              let credential = KeychainStore.read(account: connection.credentialAccount), !credential.isEmpty else {
+              let credential = automaticCredential(connection.credentialAccount), !credential.isEmpty else {
             throw SourceFailure.unavailable("请先配置模型连接和凭据。")
         }
-        return try await AgentConnectionTester(bridge: agentBridge).test(kind, connection: connection, credential: credential, headers: connectionHeaders(connection))
+        let headers = connectionHeaders(connection)
+        let fingerprint = capabilityFingerprint(connection, credential: credential, headers: headers)
+        func isCurrent() -> Bool {
+            connections.first(where: { $0.id == id }) == connection && currentCapabilityFingerprint(connection) == fingerprint
+        }
+        do {
+            let result: String
+            if let connectionTester { result = try await connectionTester(kind, connection, credential, headers) }
+            else if let agentBridge {
+                result = try await AgentConnectionTester(bridge: agentBridge).test(kind, connection: connection, credential: credential, headers: headers)
+            } else { throw SourceFailure.unavailable("Agent 运行时不可用。") }
+            guard isCurrent() else { throw SourceFailure.unavailable("连接配置已更新，请重新测试。") }
+            if kind == .tools { try saveToolCapability(id, state: .verified, fingerprint: fingerprint) }
+            return result
+        } catch {
+            if kind == .tools, isCurrent(), case AgentConnectionTester.TestError.missingTool = error {
+                try saveToolCapability(id, state: .notVerified, fingerprint: fingerprint)
+            }
+            throw error
+        }
+    }
+
+    public var researchUnavailableReason: String? {
+        guard let id = assignment.analysis, toolCapabilities[id]?.state == .notVerified else { return nil }
+        return "该连接未通过工具调用测试。可以使用直接回答，或在设置中更换模型并重新测试。"
+    }
+
+    private func capabilityFingerprint(_ connection: AIConnection, credential: String, headers: [String: String]) -> String {
+        struct Input: Encodable { let connection: AIConnection; let credential: String; let headers: [String: String] }
+        let data = (try? TrendingJSON.data(Input(connection: connection, credential: credential, headers: headers))) ?? Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func currentCapabilityFingerprint(_ connection: AIConnection) -> String? {
+        guard let credential = automaticCredential(connection.credentialAccount), !credential.isEmpty else { return nil }
+        return capabilityFingerprint(connection, credential: credential, headers: connectionHeaders(connection))
+    }
+
+    private func saveToolCapability(_ id: UUID, state: ModelToolCapability.State, fingerprint: String) throws {
+        var updated = toolCapabilities
+        updated[id] = ModelToolCapability(state: state, checkedAt: .now, fingerprint: fingerprint)
+        try database.saveDocument(updated, key: "modelToolCapabilities")
+        toolCapabilities = updated
+    }
+
+    private func invalidateToolCapability(_ id: UUID) {
+        toolCapabilities.removeValue(forKey: id)
+        try? database.saveDocument(toolCapabilities, key: "modelToolCapabilities")
     }
 
     public func sendChatMessage(_ text: String, itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
@@ -809,7 +861,7 @@ public final class TrendingAppModel: ObservableObject {
         analysisChat.send(text, itemID: itemID, evidence: context,
                           connection: connection,
                           credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) }, headers: connection.map(connectionHeaders) ?? [:],
-                          mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
+                          mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, researchRestriction: researchUnavailableReason, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func retryChat(itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
@@ -821,7 +873,7 @@ public final class TrendingAppModel: ObservableObject {
         analysisChat.retry(itemID: itemID, evidence: context,
                            connection: connection,
                            credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) }, headers: connection.map(connectionHeaders) ?? [:],
-                           mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
+                           mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, researchRestriction: researchUnavailableReason, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func discoverMCPTools(config: AgentMCPServer.Configuration) async throws -> AgentMCPDiscovery {
@@ -888,6 +940,11 @@ public final class TrendingAppModel: ObservableObject {
         feeds = (try? database.document([FeedSource].self, key: "feeds")) ?? [BuiltInFeeds.linuxDo, BuiltInFeeds.landian, BuiltInFeeds.poJie, BuiltInFeeds.wechat]
         connections = (try? database.document([AIConnection].self, key: "connections")) ?? []
         assignment = (try? database.document(AIAssignment.self, key: "assignment")) ?? .empty
+        let capabilities = (try? database.document([UUID: ModelToolCapability].self, key: "modelToolCapabilities")) ?? [:]
+        toolCapabilities = capabilities.filter { id, result in
+            guard let connection = connections.first(where: { $0.id == id }) else { return false }
+            return currentCapabilityFingerprint(connection) == result.fingerprint
+        }
         if let storedTabs = try? database.document([TabDefinition].self, key: "tabs"), !storedTabs.isEmpty {
             tabs = storedTabs
         } else {
@@ -1065,6 +1122,7 @@ public final class TrendingAppModel: ObservableObject {
         let previous: [String: String]? = stored == nil ? [:] : stored.flatMap { try? AIRequestHeaders.parse($0) }
         guard headerWriter(account, encoded) else { return false }
         if previous != headers {
+            invalidateToolCapability(id)
             if assignment.classification == id { invalidateEventAssessments() }
             if assignment.classification == id || assignment.summary == id { rescheduleAutomaticAnalysis() }
         }
@@ -1099,6 +1157,7 @@ public final class TrendingAppModel: ObservableObject {
         replacement[index] = updated
         try database.saveDocument(replacement, key: "connections")
         connections = replacement
+        invalidateToolCapability(updated.id)
         if assignment.classification == updated.id { invalidateEventAssessments() }
         if assignment.classification == updated.id || assignment.summary == updated.id { rescheduleAutomaticAnalysis() }
     }
@@ -1107,6 +1166,7 @@ public final class TrendingAppModel: ObservableObject {
         guard let connection = connections.first(where: { $0.id == id }),
               !credential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               credentialWriter(connection.credentialAccount, credential) else { return false }
+        invalidateToolCapability(id)
         // Existing successful analyses remain valid; pending requests use the new key.
         if assignment.classification == id || assignment.summary == id { rescheduleAutomaticAnalysis() }
         return true

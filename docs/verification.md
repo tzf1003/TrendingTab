@@ -1,5 +1,17 @@
 # 验证记录
 
+搜索入口回归补齐 API 密钥缺失时的网页路线：Brave、Tavily 未保存有效密钥时尝试所选网页搜索，保留关键词、站点与时间条件并说明使用网页入口；显式网页搜索不会读取 API 密钥。两项路由测试通过研究导航策略观察地址并阻止实际联网，因此不代表真实搜索结果已返回。随后完整浏览器回归 75 项、2 项真实网络跳过、1 项网页后台请求预期失败、零意外失败，结果为 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_21-26-09-+0800.xcresult`；主应用 Debug 构建和工作流语法检查通过。
+
+使用 v0.2.50 的正式客户端完成两种 MCP 外部服务互通：Streamable HTTP 调用 `https://mcp.context7.com/mcp` 的 `resolve-library-id`，返回 SwiftUI 文档条目与有效库标识；stdio 使用官方 `@modelcontextprotocol/server-everything@2.2.1`，仅启用 `echo`，授权回调一次后收到 `Echo: TrendingTab reference interoperability`。客户端使用随包 Node 22.19.0，参考服务器因其运行要求使用本机 Node 26.13.0。这些检查覆盖生产传输客户端与真实外部服务，不代表已完成实际模型和界面授权卡的整条调用链路。两份本地证明文件位于外接盘 `lifecycle-acceptance/mcp-http-proof.json` 与 `mcp-stdio-proof.json`。
+
+同日在 Atlas 辅助桌面使用正式版 v0.2.50、实际 Pi 子进程与本地模拟模型完成一次回答，再关闭事件中心并在同一进程重开。原问题与回答均已清除，界面显示“从一个问题开始”和空白“对话输入”；AX 读回与截图一致。截图为 Atlas `runs/1794055652117468000-capture.png` 与 `runs/1794055720751052000-capture.png`。测试连接、任务分配及其合成 Keychain 条目随后清除，辅助账号基线回读为空。该项验证会话内存生命周期，不使用真实模型或主账号凭据。
+
+模型工具能力记录新增本地回归：工具测试未调用工具时保存失败状态，成功时保存通过状态；网络故障保持已有记录，参数、密钥或请求头变化使旧结果失效，在途旧结果丢弃。深度研究在已知失败状态下保留问题、阻止发出请求，直接回答和重新测试后的重试可用。完整 Swift 回归 115 项、4 项环境跳过、零失败；浏览器回归 73 项、2 项真实网络跳过、1 项网页后台请求预期失败、零意外失败，结果位于 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_21-13-11-+0800.xcresult`。主应用 Debug 构建通过。
+
+随后在 Atlas 辅助桌面使用本地 Debug 应用、实际 Pi 子进程和仅返回文本的模拟模型完成界面验收：设置页显示“工具调用未通过 · 可使用直接回答”，深度研究的发送及两个快捷提问按钮在 AX 中读回停用；切回直接回答后发出一次请求，收到完整模拟回答及用量。设置页截图为 Atlas `runs/1794059827834145000-capture.png`；对话结果经 AX 读回，截图中的右栏部分被系统通知遮挡。该项证明模型能力提示和限制的界面接线，不代表真实模型或网站研究效果。测试应用随后退出，合成连接、任务分配、能力记录及对应 Keychain 条目清除，辅助账号配置读回为空，原有站点数据保留，Atlas 任务清理为空。
+
+验证分支 [CI 42376430274](https://github.com/tzf1003/TrendingTab/actions/runs/42376430274)（提交 `88e96d1ad1af`）通过测试、签名公证及 Intel 原生验证，正式发布按分支规则跳过。实际应用测试镜像 `TrendingTab-0.2.51.dmg` SHA-256 为 `55ad49e8e47aa0e8e75c4f208c60e78273b2459936f2c97441266570b6f6108f`，Runtime 0.1.6 测试镜像为 `ed21b96f47a87f5cc48c2acc5451790ebb52e16a6916b839dcc95a68369e807c`；校验文件、镜像完整性和公证票据通过。主应用、Widget、独立 Runtime 的签名和 arm64／x86_64 架构通过检查，随包及独立 Runtime 在原生与 Rosetta 下通过健康检查。本机 Gatekeeper 为全局关闭，启用检查时的行为以 CI 为证。该制品包含工具能力改动，早于搜索密钥缺失时的回退调整。
+
 2026-11-07 正式版 [v0.2.50](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.50) 对应代码提交 `7bd8aac1804c`，[CI 42371063629](https://github.com/tzf1003/TrendingTab/actions/runs/42371063629) 的构建、签名公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生检查及发布全部成功。Swift 108 项、4 项环境跳过，浏览器 73 项、2 项真实网络跳过，零意外失败；网页脚本后台 POST 边界继续保留为预期失败。
 
 实际应用 DMG SHA-256 为 `e16afaaf14859a2ff03492034d04d491a397d2b1d9d95bb526f6e402321b699e`，与发布资产 digest 和校验文件一致；本机镜像、公证票据、主应用／Widget 运行身份及双架构检查通过。随包 Runtime 0.1.6、Pi 1.5.0 在 arm64 与 Rosetta x86_64 下均通过健康检查，工具目录包含标签查询、输入和滚动。同一 CI 的独立 Runtime 镜像 SHA-256 为 `9c35fa75e3aefd42a720aab9462cc5b2bd605f00fd77df01c09aaac1bb8c41d6`，本机镜像与票据通过；同版本独立组件沿用既有发布资产。本机 Gatekeeper 仍为全局关闭，启用检查时的结果以本次 CI 为证。
