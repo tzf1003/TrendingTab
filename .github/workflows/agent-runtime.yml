@@ -119,6 +119,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: TrendingTab-AgentRuntime-${{ inputs.version }}
@@ -134,7 +135,7 @@ jobs:
           dmg="TrendingTab-AgentRuntime-$RUNTIME_VERSION.dmg"
           shasum -a 256 -c "$dmg.sha256"
           hdiutil verify "$dmg"
-          zsh scripts/staple-with-retry.sh "$dmg" validate
+          zsh "$GITHUB_WORKSPACE/scripts/staple-with-retry.sh" "$dmg" validate
           hdiutil attach "$dmg" -readonly -nobrowse -plist > "$RUNNER_TEMP/mount.plist"
           mountpoint="$(python3 -c 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); print(next(e["mount-point"] for e in p["system-entities"] if "mount-point" in e))' "$RUNNER_TEMP/mount.plist")"
           trap 'hdiutil detach "$mountpoint" -quiet' EXIT
