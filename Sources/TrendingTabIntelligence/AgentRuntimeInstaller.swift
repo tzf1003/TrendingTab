@@ -38,6 +38,14 @@ public actor AgentRuntimeInstaller {
     private let bundledPiVersion: String
     private let bundledVersion: String
     private var installing = false
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func finishOperation() {
+        installing = false
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
 
     public init(root: URL, appVersion: String, systemVersion: String, bundledExecutable: URL, bundledHealthScript: URL,
                 bundledPiVersion: String, bundledVersion: String = "0.1.0") {
@@ -71,9 +79,12 @@ public actor AgentRuntimeInstaller {
     /// On launch, revalidate the selected component; recover to the previous
     /// verified version or the app's bundled runtime if it is no longer usable.
     public func resolveActive() async throws -> Location {
-        guard !installing else { throw AgentRuntimeInstallError.busy }
+        while installing {
+            await withCheckedContinuation { idleWaiters.append($0) }
+        }
+        try Task.checkCancellation()
         installing = true
-        defer { installing = false }
+        defer { finishOperation() }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let lock = try acquireLock()
         defer { releaseLock(lock) }
@@ -87,19 +98,42 @@ public actor AgentRuntimeInstaller {
         guard let active = stored.active else { return try await bundledLocation(recovered: false) }
         do { return try await verifiedLocation(version: active, recovered: false) }
         catch is CancellationError { throw CancellationError() }
-        catch {
-            if let previous = stored.previous {
-                do {
-                    let fallback = try await verifiedLocation(version: previous, recovered: true)
-                    try write(Selection(active: previous, previous: nil))
-                    return fallback
-                } catch is CancellationError { throw CancellationError() }
-                catch { }
-            }
-            let fallback = try await bundledLocation(recovered: true)
-            try write(Selection(active: nil, previous: nil))
-            return fallback
+        catch { return try await recover(to: stored.previous) }
+    }
+
+    /// A late failure from an older process must not roll back a newer selection.
+    public func recoverFailedRuntime(script: URL) async throws -> Location? {
+        // Recovery must survive an overlapping update. Re-read the committed
+        // selection after it finishes so an older crash cannot undo that update.
+        while installing {
+            await withCheckedContinuation { idleWaiters.append($0) }
         }
+        try Task.checkCancellation()
+        installing = true
+        defer { finishOperation() }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let lock = try acquireLock()
+        defer { releaseLock(lock) }
+        let stored = try selection()
+        guard let active = stored.active,
+              try bundle(for: active).appendingPathComponent("Contents/Resources/runtime.mjs").standardizedFileURL == script.standardizedFileURL else {
+            return nil
+        }
+        return try await recover(to: stored.previous)
+    }
+
+    private func recover(to previous: String?) async throws -> Location {
+        if let previous {
+            do {
+                let fallback = try await verifiedLocation(version: previous, recovered: true)
+                try write(Selection(active: previous, previous: nil))
+                return fallback
+            } catch is CancellationError { throw CancellationError() }
+            catch { }
+        }
+        let fallback = try await bundledLocation(recovered: true)
+        try write(Selection(active: nil, previous: nil))
+        return fallback
     }
 
     private func bundledLocation(recovered: Bool) async throws -> Location {
@@ -127,7 +161,7 @@ public actor AgentRuntimeInstaller {
         try Task.checkCancellation()
         guard !installing else { throw AgentRuntimeInstallError.busy }
         installing = true
-        defer { installing = false }
+        defer { finishOperation() }
         let manager = FileManager.default
         try manager.createDirectory(at: root.appendingPathComponent("versions"), withIntermediateDirectories: true)
         let lock = try acquireLock()
@@ -208,7 +242,7 @@ public actor AgentRuntimeInstaller {
     public func rollback() async throws -> Selection {
         guard !installing else { throw AgentRuntimeInstallError.busy }
         installing = true
-        defer { installing = false }
+        defer { finishOperation() }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let lock = try acquireLock()
         defer { releaseLock(lock) }

@@ -5,6 +5,37 @@ import TrendingTabCore
 import TrendingTabKit
 
 final class AgentBridgeTests: XCTestCase {
+    func testFailedRuntimeRecoversForNextTaskWithoutReplayingFailedTask() async throws {
+        guard let node = ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_NODE"] else {
+            throw XCTSkip("Set the Node path to exercise runtime recovery.")
+        }
+        let healthy = try XCTUnwrap(Bundle.module.url(forResource: "agent-delayed-cancel", withExtension: "mjs"))
+        let broken = FileManager.default.temporaryDirectory.appendingPathComponent("broken-\(UUID().uuidString).mjs")
+        try "process.exit(1)".write(to: broken, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: broken) }
+        let bridge = AgentBridge(executableURL: URL(fileURLWithPath: node), scriptURL: broken)
+        let recovered = expectation(description: "failed runtime is reported")
+        await bridge.setRuntimeRecovery { failedScript in
+            XCTAssertEqual(failedScript, broken)
+            recovered.fulfill()
+            return (URL(fileURLWithPath: node), healthy)
+        }
+        let connection = AIConnection(name: "Fixture", kind: .openAIChat, baseURL: URL(string: "https://example.com/v1")!,
+                                      model: "mock", credentialAccount: "fixture")
+        do {
+            let stream = try await bridge.run(sessionID: "failed", connection: connection,
+                credential: "fixture", prompt: "second", system: "test")
+            for try await _ in stream { }
+            XCTFail("The failed task must report its failure")
+        } catch is AgentBridgeError { }
+        let stream = try await bridge.run(sessionID: "recovered", connection: connection,
+            credential: "fixture", prompt: "second", system: "test")
+        var completed = false
+        for try await event in stream { if event.type == "completed" { completed = true } }
+        XCTAssertTrue(completed)
+        await fulfillment(of: [recovered], timeout: 5)
+    }
+
     @MainActor
     func testIdleRuntimeReadersDoNotStarveOtherTasks() async throws {
         guard let node = ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_NODE"] else {

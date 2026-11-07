@@ -71,7 +71,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         @Published var readerContent: ReaderContent?
         @Published var showingReader = false
         @Published var extractingReader = false
-        var userTookControl = false
+        @Published var userTookControl = false
         var needsUserAction = false
         var blockedAction: BlockedAction?
         var approvedNavigation: ApprovedNavigation?
@@ -116,7 +116,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     private func recordUserInput(_ event: NSEvent) {
-        guard let tab = selected, tab.owner == .user, let window = event.window,
+        guard let tab = selected, let window = event.window,
               tab.webView.window === window else { return }
         let target: NSView?
         if event.type == .keyDown {
@@ -129,8 +129,24 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     func noteUserInteraction(in tab: Tab) {
-        guard tab.owner == .user, tabs.contains(where: { $0 === tab }) else { return }
+        guard tabs.contains(where: { $0 === tab }) else { return }
+        if tab.owner == .agent {
+            takeControl(tab)
+            return
+        }
         tab.userInteractionRevision += 1
+        authorityChanges.send()
+    }
+
+    /// Selecting an AI tab only previews it. Explicit toolbar actions or input
+    /// inside its page transfer control to the user and revoke agent authority.
+    func takeControl(_ tab: Tab) {
+        guard tab.owner == .agent, tabs.contains(where: { $0 === tab }) else { return }
+        guard !tab.userTookControl else { return }
+        tab.userTookControl = true
+        tab.approvedNavigation = nil
+        researchLoads.remove(tab.id)
+        tab.researchNavigationPending = false
         authorityChanges.send()
     }
 
@@ -146,8 +162,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     private func addTab(owner: Owner, taskID: String?, configuration: WKWebViewConfiguration, url: URL?, select: Bool) -> Tab {
-        // Background research tabs are never installed in a window until the user
-        // takes over. Give them a desktop viewport so responsive sites can render.
+        // Research tabs need a desktop viewport even before the user previews them.
         let initialFrame = owner == .agent ? CGRect(x: 0, y: 0, width: 1024, height: 768) : .zero
         let webView = WKWebView(frame: initialFrame, configuration: configuration)
         let tab = Tab(owner: owner, agentTaskID: taskID, webView: webView)
@@ -234,15 +249,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         }
     }
 
-    func selectTab(_ tab: Tab) {
-        if tab.owner == .agent {
-            tab.userTookControl = true
-            tab.approvedNavigation = nil
-            researchLoads.remove(tab.id)
-            tab.researchNavigationPending = false
-        }
-        selectedID = tab.id
-    }
+    func selectTab(_ tab: Tab) { selectedID = tab.id }
 
     func stopResearchLoading(_ tab: Tab) {
         researchLoads.remove(tab.id)
@@ -549,6 +556,11 @@ private struct BrowserTabContent: View {
             Button { if let url = tab.webView.url { NSWorkspace.shared.open(url) } } label: {
                 Image(systemName: "arrow.up.forward.square")
             }.help("在浏览器中打开")
+            if tab.owner == .agent && !tab.userTookControl {
+                Button("接管此页面") { workspace.takeControl(tab) }
+                    .buttonStyle(.bordered)
+                    .help("停止 AI 操作并接管此页面")
+            }
         }
         .buttonStyle(.borderless).padding(8)
         .onChange(of: tab.address, initial: true) { _, value in address = value }

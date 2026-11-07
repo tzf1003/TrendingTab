@@ -28,6 +28,8 @@ public struct AppRelease: Equatable, Sendable {
 
 public enum AppUpdateError: Error, Equatable, LocalizedError {
     case unavailable
+    case rateLimited
+    case http(Int)
     case invalidPackage
     case checksumMismatch
     case invalidSignature
@@ -36,6 +38,8 @@ public enum AppUpdateError: Error, Equatable, LocalizedError {
     public var message: String {
         switch self {
         case .unavailable: "无法读取更新信息"
+        case .rateLimited: "GitHub 更新接口已限流，请稍后重试或打开发布页面下载"
+        case .http(let status): "更新服务返回 HTTP \(status)，请稍后重试"
         case .invalidPackage: "更新包缺少应用"
         case .checksumMismatch: "更新包完整性校验失败"
         case .invalidSignature: "更新包的应用签名无效"
@@ -48,6 +52,14 @@ public enum AppUpdateError: Error, Equatable, LocalizedError {
 
 public enum ReleaseFeed {
     public static let latest = URL(string: "https://api.github.com/repos/tzf1003/TrendingTab/releases/latest")!
+
+    public static func validateResponse(_ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { throw AppUpdateError.unavailable }
+        if http.statusCode == 429 || (http.statusCode == 403 && http.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0") {
+            throw AppUpdateError.rateLimited
+        }
+        guard (200..<300).contains(http.statusCode) else { throw AppUpdateError.http(http.statusCode) }
+    }
 
     public static func parse(_ data: Data, currentVersion: String) throws -> AppRelease? {
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

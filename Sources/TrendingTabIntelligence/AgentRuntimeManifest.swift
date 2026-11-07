@@ -28,6 +28,11 @@ public enum AgentRuntimeReleaseFeed {
     /// not hide older, independently published runtime components.
     public static func latest(currentVersion: String,
                               fetch: @Sendable (URLRequest) async throws -> (Data, URLResponse)) async throws -> AgentRuntimeRelease? {
+        try await candidates(currentVersion: currentVersion, fetch: fetch).first
+    }
+
+    public static func candidates(currentVersion: String,
+                                  fetch: @Sendable (URLRequest) async throws -> (Data, URLResponse)) async throws -> [AgentRuntimeRelease] {
         var allReleases: [[String: Any]] = []
         for page in 1...maximumPages {
             try Task.checkCancellation()
@@ -37,19 +42,24 @@ public enum AgentRuntimeReleaseFeed {
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             let (data, response) = try await fetch(request)
             try Task.checkCancellation()
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            try ReleaseFeed.validateResponse(response)
+            guard let http = response as? HTTPURLResponse,
                   http.url == url, data.count <= maximumPageBytes,
                   let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                   entries.count <= pageSize else { throw AgentRuntimeManifestError.invalid }
             allReleases.append(contentsOf: entries)
             if entries.count < pageSize {
-                return try parse(JSONSerialization.data(withJSONObject: allReleases), currentVersion: currentVersion)
+                return try parseCandidates(JSONSerialization.data(withJSONObject: allReleases), currentVersion: currentVersion)
             }
         }
         throw AgentRuntimeManifestError.incompleteFeed
     }
 
     public static func parse(_ data: Data, currentVersion: String) throws -> AgentRuntimeRelease? {
+        try parseCandidates(data, currentVersion: currentVersion).first
+    }
+
+    public static func parseCandidates(_ data: Data, currentVersion: String) throws -> [AgentRuntimeRelease] {
         guard AgentRuntimeManifest.validVersion(currentVersion),
               let object = try? JSONSerialization.jsonObject(with: data) else { throw AgentRuntimeManifestError.invalid }
         let releases: [[String: Any]]
@@ -84,9 +94,24 @@ public enum AgentRuntimeReleaseFeed {
         guard runtimeAssets.count == candidates.count else { throw AgentRuntimeManifestError.invalid }
         let grouped = Dictionary(grouping: candidates, by: \.version)
         guard grouped.values.allSatisfy({ Set($0.map(\.sha256)).count == 1 }) else { throw AgentRuntimeManifestError.invalid }
-        guard let candidate = candidates.filter({ ReleaseFeed.isNewer($0.version, than: currentVersion) })
-            .sorted(by: { ReleaseFeed.isNewer($0.version, than: $1.version) }).first else { return nil }
-        return candidate
+        return grouped.values.compactMap(\.first).filter { ReleaseFeed.isNewer($0.version, than: currentVersion) }
+            .sorted { ReleaseFeed.isNewer($0.version, than: $1.version) }
+    }
+
+    /// Compatibility is checked against the signed package. Integrity, network,
+    /// and cancellation failures stop the operation instead of selecting an older build.
+    public static func firstCompatible(_ candidates: [AgentRuntimeRelease],
+                                       validate: @Sendable (AgentRuntimeRelease) async throws -> Void) async throws -> AgentRuntimeRelease? {
+        for candidate in candidates {
+            try Task.checkCancellation()
+            do {
+                try await validate(candidate)
+                // Success may already have committed the installer selection.
+                // Let the caller finish its process handoff even if cancelled.
+                return candidate
+            } catch AgentRuntimeManifestError.incompatible { continue }
+        }
+        return nil
     }
 }
 

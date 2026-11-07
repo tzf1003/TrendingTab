@@ -37,6 +37,9 @@ final class BrowserToolBroker: ObservableObject {
     struct ActionRequest: Identifiable {
         let id, runID, itemID, taskTitle, pageAddress, title, method, destination: String
         let fields: [String]
+        let tabID: UUID
+        let navigationRevision: Int
+        let pageURL: URL
     }
     struct ActionOutcome {
         let itemID: String
@@ -405,7 +408,7 @@ final class BrowserToolBroker: ObservableObject {
 
         case AgentToolName.readAIPage.rawValue:
             guard let raw = request.arguments["tabID"], let id = UUID(uuidString: raw),
-                  let tab = workspace.tabs.first(where: { $0.id == id && $0.owner == .agent && $0.agentTaskID == runID }) else {
+                  let tab = workspace.tabs.first(where: { $0.id == id && ownsAgentTab($0, runID: runID) }) else {
                 return "无法读取：页面不存在或不属于当前研究任务。"
             }
             let offsetString = request.arguments["offset"] ?? "0"
@@ -414,7 +417,7 @@ final class BrowserToolBroker: ObservableObject {
 
         case AgentToolName.findAIPage.rawValue:
             guard let raw = request.arguments["tabID"], let id = UUID(uuidString: raw),
-                  let tab = workspace.tabs.first(where: { $0.id == id && $0.owner == .agent && $0.agentTaskID == runID }),
+                  let tab = workspace.tabs.first(where: { $0.id == id && ownsAgentTab($0, runID: runID) }),
                   let query = request.arguments["query"]?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !query.isEmpty, query.count <= 100 else { return "页面或查找关键词无效。" }
             return try await readText(tab, runID: runID, itemID: itemID, authorizedUserTab: false, find: query)
@@ -571,7 +574,8 @@ final class BrowserToolBroker: ObservableObject {
             guard actionRequest == nil else { return "已有页面操作等待确认。" }
             let approved = await askAction(ActionRequest(id: request.requestID, runID: runID, itemID: itemID, taskTitle: taskTitle,
                 pageAddress: publicAddress(reference.pageURL), title: action.title, method: action.method,
-                destination: destination.absoluteString, fields: action.fields.filter(\.visible).map { "\($0.name)：\($0.value)" }))
+                destination: destination.absoluteString, fields: action.fields.filter(\.visible).map { "\($0.name)：\($0.value)" },
+                tabID: tab.id, navigationRevision: reference.revision, pageURL: reference.pageURL))
             try Task.checkCancellation()
             guard approved else { return "用户拒绝了页面操作。" }
             guard formReferences[id] != nil,
@@ -631,7 +635,8 @@ final class BrowserToolBroker: ObservableObject {
             let button = reference.buttons[reference.index]
             let approved = await askAction(ActionRequest(id: request.requestID, runID: runID, itemID: itemID, taskTitle: taskTitle,
                 pageAddress: publicAddress(reference.pageURL), title: button.title, method: "网页按钮",
-                destination: publicAddress(reference.pageURL), fields: []))
+                destination: publicAddress(reference.pageURL), fields: [],
+                tabID: tab.id, navigationRevision: reference.revision, pageURL: reference.pageURL))
             try Task.checkCancellation()
             guard approved else { return "用户拒绝了页面操作。" }
             guard buttonReferences[id] != nil,
@@ -670,8 +675,8 @@ final class BrowserToolBroker: ObservableObject {
 
         case AgentToolName.waitForLogin.rawValue:
             guard let raw = request.arguments["tabID"], let id = UUID(uuidString: raw),
-                  let tab = workspace.tabs.first(where: { $0.id == id && $0.owner == .agent && $0.agentTaskID == runID }),
-                  !tab.userTookControl, workspace.selectedID != tab.id, let url = tab.webView.url else {
+                  let tab = workspace.tabs.first(where: { $0.id == id && ownsAgentTab($0, runID: runID) }),
+                  !tab.userTookControl, let url = tab.webView.url else {
                 return "研究页面不存在或已由用户接管。"
             }
             guard loginRequest == nil else { return "已有登录或验证请求。" }
@@ -681,7 +686,7 @@ final class BrowserToolBroker: ObservableObject {
                                                             actionMethod: tab.blockedAction?.method,
                                                             actionAddress: tab.blockedAction.map { publicAddress($0.destination) }))
             try Task.checkCancellation()
-            guard accepted, !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), tab.agentTaskID == runID else {
+            guard accepted, !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), ownsAgentTab(tab, runID: runID) else {
                 return "用户未继续此页面的研究。"
             }
             return try await readText(tab, runID: runID, itemID: itemID, authorizedUserTab: false)
@@ -735,11 +740,33 @@ final class BrowserToolBroker: ObservableObject {
         publicDocuments = publicDocuments.filter { $0.value.runID != runID }
     }
 
+    /// AI pages belong to the conversation. Element references and user grants
+    /// remain scoped to a single run and must be acquired again on a follow-up.
+    private func ownsAgentTab(_ tab: BrowserWorkspace.Tab, runID: String) -> Bool {
+        guard tab.owner == .agent, let ownerRun = tab.agentTaskID else { return false }
+        if ownerRun == runID { return true }
+        guard let itemID = runItems[runID] else { return false }
+        return runItems[ownerRun] == itemID
+    }
+
+    func researchContext(itemID: String) -> String {
+        let pages = workspace.tabs.filter { tab in
+            tab.owner == .agent && tab.agentTaskID.flatMap { runItems[$0] } == itemID
+        }.suffix(12).compactMap { tab -> String? in
+            guard let url = tab.webView.url else { return nil }
+            let state = tab.userTookControl ? "用户已接管，请另开 AI 标签" : "可读取和观察"
+            return "页面标识：\(tab.id.uuidString)；状态：\(state)；地址：\(publicAddress(url))"
+        }
+        let evidenceContext = evidence.followUpContext(itemID: itemID)
+        guard !pages.isEmpty else { return evidenceContext }
+        return evidenceContext + "\n本对话已有的 AI 页面，可在追问中复用；操作前重新观察页面：\n" + pages.joined(separator: "\n")
+    }
+
     private func validResearchTab(_ tab: BrowserWorkspace.Tab, runID: String, revision: Int, pageURL: URL) -> Bool {
         guard !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), !tab.webView.isLoading,
               tab.navigationRevision == revision, tab.webView.url == pageURL else { return false }
         if tab.owner == .user { return validUserGrant(tab, runID: runID, requireOperation: true) }
-        return tab.owner == .agent && tab.agentTaskID == runID && !tab.userTookControl && workspace.selectedID != tab.id
+        return ownsAgentTab(tab, runID: runID) && !tab.userTookControl
     }
 
     private func validUserGrant(_ tab: BrowserWorkspace.Tab, runID: String, requireOperation: Bool) -> Bool {
@@ -751,6 +778,12 @@ final class BrowserToolBroker: ObservableObject {
     }
 
     private func revokeInvalidUserGrants() {
+        if let request = actionRequest {
+            let tab = workspace.tabs.first { $0.id == request.tabID }
+            if tab.map({ validResearchTab($0, runID: request.runID, revision: request.navigationRevision, pageURL: request.pageURL) }) != true {
+                resolveAction(false)
+            }
+        }
         if let request = permission {
             let tab = workspace.tabs.first { $0.id == request.tabID }
             if tab == nil || workspace.selectedID != request.tabID || tab?.webView.url != request.url ||
@@ -824,6 +857,7 @@ final class BrowserToolBroker: ObservableObject {
             return
         }
         workspace.selectTab(tab)
+        workspace.takeControl(tab)
         loginMessage = nil
     }
 
@@ -939,7 +973,7 @@ final class BrowserToolBroker: ObservableObject {
 
     private func readText(_ tab: BrowserWorkspace.Tab, runID: String, itemID: String, authorizedUserTab: Bool, offset: Int = 0, find: String? = nil) async throws -> String {
         let permitted = !endedRuns.contains(runID) && (authorizedUserTab ? validUserGrant(tab, runID: runID, requireOperation: false) :
-            (tab.owner == .agent && tab.agentTaskID == runID && !tab.userTookControl && workspace.selectedID != tab.id))
+            (ownsAgentTab(tab, runID: runID) && !tab.userTookControl))
         guard permitted else { return "页面权限已失效，请重新申请或使用新的 AI 标签。" }
         if !authorizedUserTab && tab.needsUserAction {
             return PageError.needsUserAction(tab.id).localizedDescription
@@ -1000,11 +1034,11 @@ final class BrowserToolBroker: ObservableObject {
             !endedRuns.contains(runID) && workspace.tabs.contains(where: { $0 === tab }) &&
             !tab.webView.isLoading && tab.navigationRevision == revision && tab.webView.url == originalURL &&
             (authorizedUserTab ? (workspace.selectionRevision == selectionRevision && validUserGrant(tab, runID: runID, requireOperation: false)) :
-                (tab.owner == .agent && tab.agentTaskID == runID && !tab.userTookControl && workspace.selectedID != tab.id))
+                (ownsAgentTab(tab, runID: runID) && !tab.userTookControl))
         }
         func unavailableMessage() -> String {
             if !authorizedUserTab, !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }),
-               tab.owner == .agent, tab.agentTaskID == runID, !tab.userTookControl, workspace.selectedID != tab.id {
+               ownsAgentTab(tab, runID: runID), !tab.userTookControl {
                 return "页面导航或内容已变化，请重新读取当前页面。"
             }
             return "页面权限已失效或内容已变化，请重新申请。"
@@ -1072,7 +1106,7 @@ final class BrowserToolBroker: ObservableObject {
         do {
             for _ in 0..<150 {
                 try Task.checkCancellation()
-                guard !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), tab.agentTaskID == runID else { throw PageError.closed }
+                guard !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), ownsAgentTab(tab, runID: runID) else { throw PageError.closed }
                 guard !tab.userTookControl else { throw PageError.userTookControl }
                 if tab.finishedRevision > 0 && tab.finishedRevision == tab.navigationRevision {
                     if tab.researchLoadLimited { throw PageError.busy }
@@ -1091,7 +1125,7 @@ final class BrowserToolBroker: ObservableObject {
     }
 
     func extractSearchResults(_ tab: BrowserWorkspace.Tab, engine: String, runID: String, itemID: String) async throws -> String {
-        guard !tab.userTookControl, workspace.selectedID != tab.id, let originalURL = tab.webView.url,
+        guard !tab.userTookControl, let originalURL = tab.webView.url,
               busyTabs.insert(tab.id).inserted else { return "搜索页面正在使用，请稍后重试。" }
         defer { busyTabs.remove(tab.id) }
         let revision = tab.navigationRevision
@@ -1112,13 +1146,14 @@ final class BrowserToolBroker: ObservableObject {
             const challenge = Array.from(document.querySelectorAll('input[type="password"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], [data-sitekey]')).some(visible);
             const body = document.body?.innerText || '';
             const qrLogin = /扫码登录|二维码登录|扫描二维码登录/.test(body) && Array.from(document.querySelectorAll('img, canvas')).some(visible);
-            return JSON.stringify({results, verificationRequired: challenge || qrLogin});
+            const baiduSafetyPage = \(engine == "baidu" ? "true" : "false") && document.title.trim() === '百度安全验证';
+            return JSON.stringify({results, verificationRequired: challenge || qrLogin || baiduSafetyPage});
         })()
         """
         let raw = try await tab.webView.callAsyncJavaScript("return \(script);", arguments: [:], in: nil, contentWorld: .defaultClient)
         try Task.checkCancellation()
-        guard !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), tab.agentTaskID == runID,
-              !tab.userTookControl, workspace.selectedID != tab.id, tab.navigationRevision == revision,
+        guard !endedRuns.contains(runID), workspace.tabs.contains(where: { $0 === tab }), ownsAgentTab(tab, runID: runID),
+              !tab.userTookControl, tab.navigationRevision == revision,
               tab.webView.url == originalURL else { return "搜索页面已变化，请重新搜索。" }
         guard let text = raw as? String, let data = text.data(using: .utf8),
               let page = try? JSONDecoder().decode(SearchPageContent.self, from: data) else {

@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import XCTest
 import TrendingTabIntelligence
+import TrendingTabCore
 
 final class AgentRuntimeManifestTests: XCTestCase {
     private func plist(_ changes: [String: Any] = [:]) throws -> Data {
@@ -74,8 +75,32 @@ final class AgentRuntimeManifestTests: XCTestCase {
         }
         let feed = try JSONSerialization.data(withJSONObject: [release("1.2.0"), release("1.4.0", prerelease: true), release("1.3.0")])
         XCTAssertEqual(try AgentRuntimeReleaseFeed.parse(feed, currentVersion: "1.0.0")?.version, "1.3.0")
+        XCTAssertEqual(try AgentRuntimeReleaseFeed.parseCandidates(feed, currentVersion: "1.0.0").map(\.version), ["1.3.0", "1.2.0"])
         let conflict = try JSONSerialization.data(withJSONObject: [release("1.3.0"), release("1.3.0", hash: String(repeating: "b", count: 64))])
         XCTAssertThrowsError(try AgentRuntimeReleaseFeed.parse(conflict, currentVersion: "1.0.0"))
+    }
+
+    func testRuntimeSelectionContinuesAfterIncompatibleCandidateAndPropagatesOtherFailures() async throws {
+        let assets = ["1.4.0", "1.3.0"].map { version in
+            let name = "TrendingTab-AgentRuntime-\(version).dmg"
+            return ["name": name, "browser_download_url": "https://github.com/tzf1003/TrendingTab/releases/download/runtime-v\(version)/\(name)",
+                    "digest": "sha256:" + String(repeating: "a", count: 64)]
+        }
+        let candidates = try AgentRuntimeReleaseFeed.parseCandidates(JSONSerialization.data(withJSONObject: ["assets": assets]), currentVersion: "1.0.0")
+        let selected = try await AgentRuntimeReleaseFeed.firstCompatible(candidates) { candidate in
+            if candidate.version == "1.4.0" { throw AgentRuntimeManifestError.incompatible }
+        }
+        XCTAssertEqual(selected?.version, "1.3.0")
+        let absent = try await AgentRuntimeReleaseFeed.firstCompatible(candidates) { _ in
+            throw AgentRuntimeManifestError.incompatible
+        }
+        XCTAssertNil(absent)
+        do {
+            _ = try await AgentRuntimeReleaseFeed.firstCompatible(candidates) { _ in
+                throw AgentRuntimeVerificationError.invalidSignature
+            }
+            XCTFail("A signature failure must stop the update")
+        } catch AgentRuntimeVerificationError.invalidSignature { }
     }
 
     func testRuntimeUpdateChecksAllReleasePages() async throws {
@@ -106,6 +131,23 @@ final class AgentRuntimeManifestTests: XCTestCase {
         XCTAssertEqual(older?.version, "1.3.0")
     }
 
+    func testCommittedRuntimeCandidateCompletesHandoffAfterCancellation() async throws {
+        let name = "TrendingTab-AgentRuntime-1.3.0.dmg"
+        let data = try JSONSerialization.data(withJSONObject: ["assets": [["name": name,
+            "browser_download_url": "https://github.com/tzf1003/TrendingTab/releases/download/runtime-v1.3.0/\(name)",
+            "digest": "sha256:" + String(repeating: "a", count: 64)]]])
+        let candidates = try AgentRuntimeReleaseFeed.parseCandidates(data, currentVersion: "1.0.0")
+        let task = Task {
+            // Successful installation has committed selection before returning.
+            let committed = try await AgentRuntimeReleaseFeed.firstCompatible(candidates) { _ in
+                withUnsafeCurrentTask { $0?.cancel() }
+            }
+            return committed?.version
+        }
+        let version = try await task.value
+        XCTAssertEqual(version, "1.3.0")
+    }
+
     func testRuntimeUpdateReportsIncompleteOrFailedReleaseFeed() async throws {
         let fullPage = try JSONSerialization.data(withJSONObject: Array(repeating: ["assets": []], count: 100))
         do {
@@ -122,7 +164,7 @@ final class AgentRuntimeManifestTests: XCTestCase {
                 return (fullPage, try XCTUnwrap(HTTPURLResponse(url: url, statusCode: page == "1" ? 200 : 429, httpVersion: nil, headerFields: nil)))
             }
             XCTFail("A failed later page must not be treated as current")
-        } catch AgentRuntimeManifestError.invalid { }
+        } catch AppUpdateError.rateLimited { }
     }
 
     func testLiveRuntimeReleaseFeedWhenConfigured() async throws {
@@ -164,6 +206,25 @@ final class AgentRuntimeManifestTests: XCTestCase {
         do {
             try await AgentRuntimeHealth.verify(executable: executable, script: hanging, expectedPiVersion: "1.5.0", timeout: 0.2)
             XCTFail("Timed-out process must not pass health validation")
+        } catch is AgentRuntimeHealthError { }
+    }
+
+    func testRuntimeHealthRejectsBrokenEntryPointEvenWhenStandaloneCheckPasses() async throws {
+        guard let node = ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_NODE"] else {
+            throw XCTSkip("Set the Node path to exercise entry-point health validation.")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let health = directory.appendingPathComponent("runtime-health.mjs")
+        let output = try JSONSerialization.data(withJSONObject: ["protocol": 1, "streaming": true, "tools": true,
+            "piVersion": "1.5.0", "toolNames": AgentToolName.allCases.map(\.rawValue)])
+        let encoded = try JSONEncoder().encode(String(decoding: output, as: UTF8.self))
+        try "process.stdout.write(\(String(decoding: encoded, as: UTF8.self)))".write(to: health, atomically: true, encoding: .utf8)
+        try "process.exit(1)".write(to: directory.appendingPathComponent("runtime.mjs"), atomically: true, encoding: .utf8)
+        do {
+            try await AgentRuntimeHealth.verify(executable: URL(fileURLWithPath: node), script: health, expectedPiVersion: "1.5.0")
+            XCTFail("A broken production entry point must be rejected before activation")
         } catch is AgentRuntimeHealthError { }
     }
 
@@ -283,6 +344,25 @@ final class AgentRuntimeManifestTests: XCTestCase {
         XCTAssertTrue(bundled.bundled)
         let reinstalled = try await installer.install(dmg: image, release: release)
         XCTAssertEqual(reinstalled.active, release.version)
+        let reinstalling = Task { try await installer.install(dmg: image, release: release) }
+        // Installation yields during hashing with its operation lock held.
+        for _ in 0..<100 {
+            let entries = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+            if entries.contains(where: { $0.hasPrefix(".download-") }) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let resolving = Task { try await installer.resolveActive() }
+        let recovered: AgentRuntimeInstaller.Location?
+        do { recovered = try await installer.recoverFailedRuntime(script: active.script) }
+        catch {
+            _ = try? await reinstalling.value
+            throw error
+        }
+        _ = try await reinstalling.value
+        _ = try await resolving.value
+        XCTAssertTrue(try XCTUnwrap(recovered).bundled)
+        let recoveredSelection = try await installer.selection()
+        XCTAssertNil(recoveredSelection.active)
     }
 
     @MainActor
@@ -305,5 +385,17 @@ final class AgentRuntimeManifestTests: XCTestCase {
         let selection = try await installer.selection()
         XCTAssertNil(selection.active)
         XCTAssertNil(selection.previous)
+
+        try Data(#"{"active":"2.0.0","previous":"1.0.0"}"#.utf8).write(to: selected)
+        let stale = try await installer.recoverFailedRuntime(script: URL(fileURLWithPath: "/old/runtime.mjs"))
+        XCTAssertNil(stale)
+        let unchangedSelection = try await installer.selection()
+        XCTAssertEqual(unchangedSelection.active, "2.0.0")
+        let failedScript = try await installer.bundle(for: "2.0.0").appendingPathComponent("Contents/Resources/runtime.mjs")
+        let fallback = try await installer.recoverFailedRuntime(script: failedScript)
+        XCTAssertTrue(try XCTUnwrap(fallback).bundled)
+        let persisted = try await installer.selection()
+        XCTAssertNil(persisted.active)
+        XCTAssertNil(persisted.previous)
     }
 }

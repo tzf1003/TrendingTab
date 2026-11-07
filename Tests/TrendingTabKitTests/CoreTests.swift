@@ -645,4 +645,22 @@ final class CoreTests: XCTestCase {
         """
         XCTAssertEqual(try ReleaseFeed.parse(Data(withRuntime.utf8), currentVersion: "0.1.0")?.assetName, "TrendingTab-0.2.0.dmg")
     }
+
+    func testReleaseFeedDistinguishesRateLimitFromOtherHTTPFailures() throws {
+        for (status, headers, expected) in [
+            (403, ["X-RateLimit-Remaining": "0"], AppUpdateError.rateLimited),
+            (429, [:], .rateLimited),
+            (403, [:], .http(403)),
+            (503, [:], .http(503))
+        ] {
+            let response = try XCTUnwrap(HTTPURLResponse(url: ReleaseFeed.latest, statusCode: status,
+                                                         httpVersion: nil, headerFields: headers))
+            XCTAssertThrowsError(try ReleaseFeed.validateResponse(response)) {
+                XCTAssertEqual($0 as? AppUpdateError, expected)
+            }
+        }
+        let success = try XCTUnwrap(HTTPURLResponse(url: ReleaseFeed.latest, statusCode: 200,
+                                                    httpVersion: nil, headerFields: [:]))
+        XCTAssertNoThrow(try ReleaseFeed.validateResponse(success))
+    }
 }

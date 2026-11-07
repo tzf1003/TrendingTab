@@ -15,7 +15,7 @@ struct EventCenterView: View {
     @State private var unresolvedReveal = false
     @State private var revealRevision = 0
     @State private var showsChat = true
-    @State private var researchMode = false
+    @AppStorage("research.mode.enabled") private var researchMode = false
     @StateObject private var browserTools: BrowserToolBroker
     @StateObject private var browser: BrowserWorkspace
     @State private var chatDrafts: [SnapshotRow.ID: String] = [:]
@@ -43,8 +43,8 @@ struct EventCenterView: View {
                     draft: chatDraft(for: openedRow?.id),
                     researchMode: $researchMode,
                     hasConnection: hasAnalysisConnection,
-                    send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.evidence.followUpContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
-                    retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.evidence.followUpContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
+                    send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
+                    retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
                     openSource: { missingStoryURL = false; browser.openStory($0, inNewTab: true) },
                     endSession: { id in model.analysisChat.clear(itemID: id); browserTools.endSession(itemID: id) },
                     close: { showsChat = false }
@@ -764,6 +764,10 @@ private struct AnalysisConversationView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 10)
+                } else {
+                    Text("启用深度研究后，可搜索和操作 AI 页面。")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.horizontal, 16).padding(.bottom, 10)
                 }
             }
             Divider()

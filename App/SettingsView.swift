@@ -990,6 +990,7 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(model.availableRelease == nil)
                     Spacer()
+                    Link("打开发布页面", destination: URL(string: "https://github.com/tzf1003/TrendingTab/releases")!)
                 }
             }
         }
@@ -1015,6 +1016,7 @@ struct SettingsView: View {
                         .disabled(!model.runtimeCanRollback)
                 }
                 .disabled(model.runtimeBusy)
+                Link("打开发布页面", destination: URL(string: "https://github.com/tzf1003/TrendingTab/releases")!)
             }
         }
     }

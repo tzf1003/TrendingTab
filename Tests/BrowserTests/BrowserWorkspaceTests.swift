@@ -160,6 +160,8 @@ final class BrowserWorkspaceTests: XCTestCase {
         let second = workspace.newTab(owner: .agent, taskID: "two", url: base.appendingPathComponent("slow"), select: false)
         try await waitUntil { second.navigationRevision > 0 && second.webView.isLoading }
         workspace.selectTab(first)
+        XCTAssertFalse(first.userTookControl)
+        workspace.takeControl(first)
         XCTAssertTrue(first.userTookControl)
         let next = workspace.newTab(owner: .agent, taskID: "three", url: base.appendingPathComponent("slow"), select: false)
         try await waitUntil { next.navigationRevision > 0 }
@@ -168,6 +170,96 @@ final class BrowserWorkspaceTests: XCTestCase {
         workspace.close(first)
         workspace.close(second)
         workspace.close(next)
+    }
+
+    func testAgentPageUserInteractionTakesControlAndRevokesAgentAuthority() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let agent = workspace.newTab(owner: .agent, taskID: "run", url: base.appendingPathComponent("article"), select: false)
+        try await waitUntil { agent.finishedRevision > 0 && !agent.webView.isLoading }
+        workspace.selectTab(agent)
+        XCTAssertFalse(agent.userTookControl)
+        workspace.noteUserInteraction(in: agent)
+        XCTAssertTrue(agent.userTookControl)
+        XCTAssertNil(agent.approvedNavigation)
+    }
+
+    func testVisibleAgentPageCanReadObserveExpandAndFollowLinks() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("article").absoluteString]),
+                                     runID: "run", itemID: "item", taskTitle: "研究")
+        let agent = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        workspace.selectTab(agent)
+        XCTAssertFalse(agent.userTookControl)
+        let reading = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]),
+                                               runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(reading.contains("游客内容"), reading)
+        func reference(_ label: String, in text: String) throws -> String {
+            let marker = try XCTUnwrap(text.range(of: label))
+            return try XCTUnwrap(text[marker.upperBound...].split(separator: "\n").first).description
+        }
+        let observation = try await broker.execute(request(.observeAIPage, ["tabID": agent.id.uuidString]),
+                                                   runID: "run", itemID: "item", taskTitle: "研究")
+        let section = try reference("可展开区域标识：", in: observation)
+        let expanded = try await broker.execute(request(.expandAISection, ["reference": section]),
+                                                runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(expanded.contains("区域已展开"), expanded)
+        let afterExpansion = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]),
+                                                      runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(afterExpansion.contains("展开后的正文"), afterExpansion)
+        let link = try reference("链接标识：", in: observation)
+        let opened = try await broker.execute(request(.openAIPageLink, ["reference": link]),
+                                              runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(opened.contains("页面已打开"), opened)
+        XCTAssertEqual(workspace.selectedID, agent.id)
+        XCTAssertTrue(workspace.tabs.contains { $0.owner == .agent && $0.webView.url?.path == "/long" })
+        workspace.takeControl(agent)
+        let denied = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]),
+                                              runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(denied.contains("权限已失效"), denied)
+        let stale = try await broker.execute(request(.openAIPageLink, ["reference": link]),
+                                             runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(stale.contains("失效"), stale)
+    }
+
+    func testFollowUpReusesConversationPagesWithFreshReferences() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("article").absoluteString]),
+                                     runID: "first", itemID: "conversation", taskTitle: "研究")
+        let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        let first = try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]),
+                                             runID: "first", itemID: "conversation", taskTitle: "研究")
+        let marker = try XCTUnwrap(first.range(of: "链接标识："))
+        let oldReference = try XCTUnwrap(first[marker.upperBound...].split(separator: "\n").first).description
+        broker.finishRun("first")
+        XCTAssertTrue(broker.researchContext(itemID: "conversation").contains(tab.id.uuidString))
+        XCTAssertFalse(broker.researchContext(itemID: "another").contains(tab.id.uuidString))
+        let reading = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                               runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(reading.contains("游客内容"), reading)
+        let stale = try await broker.execute(request(.openAIPageLink, ["reference": oldReference]),
+                                             runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(stale.contains("失效"), stale)
+        let refreshed = try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]),
+                                                 runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(refreshed.contains("链接标识："), refreshed)
+        let foreign = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                               runID: "foreign", itemID: "another", taskTitle: "另一对话")
+        XCTAssertTrue(foreign.contains("不属于当前"), foreign)
+        workspace.takeControl(tab)
+        XCTAssertTrue(broker.researchContext(itemID: "conversation").contains("用户已接管"))
+        broker.endSession(itemID: "conversation")
+        XCTAssertFalse(broker.researchContext(itemID: "conversation").contains(tab.id.uuidString))
+        let reopened = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                                runID: "reopened", itemID: "conversation", taskTitle: "重新开始")
+        XCTAssertTrue(reopened.contains("不属于当前"), reopened)
     }
 
     func testSamePageFragmentDoesNotExhaustResearchLoadingCapacity() async throws {
@@ -416,9 +508,12 @@ final class BrowserWorkspaceTests: XCTestCase {
         let pending = Task { try await broker.execute(request(.submitAIForm, ["reference": reference]), runID: "run", itemID: "item", taskTitle: "任务") }
         try await waitUntil { broker.actionRequest != nil }
         workspace.selectTab(tab)
+        XCTAssertNotNil(broker.actionRequest)
+        workspace.takeControl(tab)
+        XCTAssertNil(broker.actionRequest)
         broker.resolveAction(true)
         let result = try await pending.value
-        XCTAssertTrue(result.contains("失效"), result)
+        XCTAssertTrue(result.contains("拒绝"), result)
         let (data, _) = try await URLSession.shared.data(from: base.appendingPathComponent("stats"))
         let stats = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Int])
         XCTAssertEqual(stats["submissions"], 0)
@@ -598,6 +693,16 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertEqual(tab.userInteractionRevision, initial)
         NSApp.sendEvent(try mouse(CGPoint(x: 200, y: 200)))
         XCTAssertGreaterThan(tab.userInteractionRevision, initial)
+        tab.webView.removeFromSuperview()
+        let agent = workspace.newTab(owner: .agent, taskID: "run", select: false)
+        agent.webView.frame = CGRect(x: 0, y: 0, width: 400, height: 400)
+        container.addSubview(agent.webView)
+        defer { agent.webView.removeFromSuperview() }
+        workspace.selectTab(agent)
+        NSApp.sendEvent(try mouse(CGPoint(x: 500, y: 200)))
+        XCTAssertFalse(agent.userTookControl)
+        NSApp.sendEvent(try mouse(CGPoint(x: 200, y: 200)))
+        XCTAssertTrue(agent.userTookControl)
     }
 
     func testApprovedGetFormNavigatesOnce() async throws {
@@ -772,11 +877,12 @@ final class BrowserWorkspaceTests: XCTestCase {
         let found = try await broker.execute(request(.findAIPage, ["tabID": agent.id.uuidString, "query": "文章正文"]), runID: "run", itemID: "item", taskTitle: "测试")
         XCTAssertTrue(found.contains("登录后可见的文章正文"), found)
         XCTAssertTrue(found.contains("证据编号"), found)
-        let deniedSearch = try await broker.execute(request(.findAIPage, ["tabID": agent.id.uuidString, "query": "文章"]), runID: "other", itemID: "item", taskTitle: "测试")
+        let deniedSearch = try await broker.execute(request(.findAIPage, ["tabID": agent.id.uuidString, "query": "文章"]), runID: "other", itemID: "other-item", taskTitle: "测试")
         XCTAssertTrue(deniedSearch.contains("无效"), deniedSearch)
-        let otherRun = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]), runID: "other", itemID: "item", taskTitle: "测试")
+        let otherRun = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]), runID: "other", itemID: "other-item", taskTitle: "测试")
         XCTAssertTrue(otherRun.contains("不属于当前"), otherRun)
         workspace.selectTab(agent)
+        workspace.takeControl(agent)
         let afterTakeover = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]), runID: "run", itemID: "item", taskTitle: "测试")
         XCTAssertTrue(afterTakeover.contains("权限已失效"), afterTakeover)
     }
@@ -1020,7 +1126,7 @@ final class BrowserWorkspaceTests: XCTestCase {
         }
     }
 
-    func testPiResearchReadsLoggedInPageThroughNativeBroker() async throws {
+    func testPiResearchReadsVisibleLoggedInPageThroughNativeBroker() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let node = environment["TRENDINGTAB_TEST_NODE"], let runtime = environment["TRENDINGTAB_TEST_RUNTIME"] else {
             if environment["TRENDINGTAB_REQUIRE_PI_INTEGRATION"] == "1" {
@@ -1049,6 +1155,10 @@ final class BrowserWorkspaceTests: XCTestCase {
                 called.append(request.name)
                 let result = try await broker.execute(request, runID: event.runID, itemID: "item", taskTitle: "测试研究", currentStoryURL: storyURL)
                 XCTAssertFalse(result.contains("session=private"))
+                if request.name == AgentToolName.openCurrentStory.rawValue {
+                    XCTAssertEqual(workspace.selectedID, userTab.id)
+                    workspace.selectTab(try XCTUnwrap(workspace.tabs.first { $0.owner == .agent }))
+                }
                 try await bridge.respondToTool(runID: event.runID, requestID: request.requestID, text: result)
             }
             if event.type == "text_delta" { text += event.text ?? "" }
@@ -1056,7 +1166,8 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertEqual(called, [AgentToolName.openCurrentStory.rawValue, AgentToolName.readAIPage.rawValue])
         XCTAssertEqual(text, "已阅读登录文章 [E1]")
         XCTAssertEqual(broker.evidence.citations(in: text, itemID: "item").valid.first?.url.path, "/article")
-        XCTAssertEqual(workspace.selectedID, userTab.id)
+        XCTAssertEqual(workspace.selectedID, workspace.tabs.first { $0.owner == .agent }?.id)
+        XCTAssertFalse(try XCTUnwrap(workspace.selected).userTookControl)
         XCTAssertEqual(userTab.webView.url?.path, "/login")
         XCTAssertEqual(workspace.tabs.first { $0.owner == .agent }?.webView.url?.query, "session=private")
     }
@@ -1181,14 +1292,14 @@ final class BrowserWorkspaceTests: XCTestCase {
         let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
         let broker = BrowserToolBroker(workspace: workspace)
         workspace.newTab()
-        for (path, expected) in [("captcha", "wait_for_login"), ("long", "没有返回结果"), ("search-result", "测试搜索结果")] {
+        for (path, engine, expected) in [("captcha", "bing", "wait_for_login"), ("long", "bing", "没有返回结果"), ("search-result", "bing", "测试搜索结果"), ("baidu-safety", "baidu", "wait_for_login")] {
             _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent(path).absoluteString]),
                                          runID: "run", itemID: "item", taskTitle: "测试")
             let tab = try XCTUnwrap(workspace.tabs.last { $0.owner == .agent })
             tab.webView.frame = CGRect(x: 0, y: 0, width: 500, height: 500)
-            let result = try await broker.extractSearchResults(tab, engine: "bing", runID: "run", itemID: "item")
+            let result = try await broker.extractSearchResults(tab, engine: engine, runID: "run", itemID: "item")
             XCTAssertTrue(result.contains(expected), result)
-            if path == "captcha" { XCTAssertTrue(result.contains(tab.id.uuidString), result) }
+            if expected == "wait_for_login" { XCTAssertTrue(result.contains(tab.id.uuidString), result) }
         }
         XCTAssertEqual(broker.evidence.records.count, 1)
     }
@@ -1254,6 +1365,7 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertTrue(navigated.contains("失效"))
         let afterNavigation = try await observe()
         workspace.selectTab(agent)
+        workspace.takeControl(agent)
         let takenOver = try await broker.execute(request(.openAIPageLink, ["reference": afterNavigation]), runID: "run", itemID: "item", taskTitle: "测试")
         XCTAssertTrue(takenOver.contains("失效"))
     }
@@ -1466,7 +1578,7 @@ final class BrowserWorkspaceTests: XCTestCase {
         let tabID = agent.id.uuidString
         let reading = try await broker.execute(request(.readAIPage, ["tabID": tabID]), runID: "run", itemID: "item", taskTitle: "测试")
         XCTAssertTrue(reading.contains("wait_for_login"), reading)
-        let foreign = try await broker.execute(request(.waitForLogin, ["tabID": tabID]), runID: "other", itemID: "item", taskTitle: "测试")
+        let foreign = try await broker.execute(request(.waitForLogin, ["tabID": tabID]), runID: "other", itemID: "other-item", taskTitle: "测试")
         XCTAssertTrue(foreign.contains("不存在"), foreign)
 
         let waiting = Task { try await broker.execute(self.request(.waitForLogin, ["tabID": tabID]), runID: "run", itemID: "item", taskTitle: "测试") }
@@ -1476,11 +1588,13 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertNotNil(broker.loginMessage)
         broker.showLoginPage()
         XCTAssertEqual(workspace.selectedID, agent.id)
+        XCTAssertTrue(agent.userTookControl)
         var revision = agent.navigationRevision
         var otherOrigin = try XCTUnwrap(URLComponents(url: base, resolvingAgainstBaseURL: false))
         otherOrigin.host = "localhost"
         workspace.load(try XCTUnwrap(otherOrigin.url).appendingPathComponent("article"), in: agent)
         try await waitUntil { agent.navigationRevision > revision && agent.finishedRevision == agent.navigationRevision }
+        workspace.takeControl(agent)
         broker.resumeAfterLogin()
         XCTAssertNotNil(broker.loginRequest)
         XCTAssertEqual(broker.loginMessage, "请返回原站点页面后继续。")
@@ -1490,6 +1604,7 @@ final class BrowserWorkspaceTests: XCTestCase {
         revision = agent.navigationRevision
         workspace.load(base.appendingPathComponent("article"), in: agent)
         try await waitUntil { agent.navigationRevision > revision && agent.finishedRevision == agent.navigationRevision }
+        workspace.takeControl(agent)
         broker.resumeAfterLogin()
         let resumed = try await waiting.value
         XCTAssertTrue(resumed.contains("登录后可见的文章正文"), resumed)

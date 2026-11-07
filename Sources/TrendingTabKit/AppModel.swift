@@ -63,6 +63,7 @@ public final class TrendingAppModel: ObservableObject {
     @Published public private(set) var availableRuntime: AgentRuntimeRelease?
     @Published public private(set) var runtimeBusy = false
     @Published public private(set) var runtimeCanRollback = false
+    private var runtimeUpdateCandidates: [AgentRuntimeRelease] = []
     @Published public var requestedEventID: UUID?
     @Published public var requestedItemID: String?
     @Published public var requestedTabID: UUID?
@@ -133,6 +134,9 @@ public final class TrendingAppModel: ObservableObject {
 
     private func prepareRuntime() async {
         guard let runtimeInstaller, let agentBridge else { return }
+        await agentBridge.setRuntimeRecovery { [weak self] failedScript in
+            await self?.recoverFailedRuntime(script: failedScript)
+        }
         do {
             let location = try await runtimeInstaller.resolveActive()
             await agentBridge.useRuntime(executable: location.executable, script: location.script)
@@ -147,18 +151,35 @@ public final class TrendingAppModel: ObservableObject {
         }
     }
 
+    private func recoverFailedRuntime(script: URL) async -> (executable: URL, script: URL)? {
+        guard let runtimeInstaller else { return nil }
+        do {
+            guard let location = try await runtimeInstaller.recoverFailedRuntime(script: script) else { return nil }
+            runtimeVersion = location.version
+            runtimePiVersion = location.piVersion
+            runtimeCanRollback = (try await runtimeInstaller.selection()).active != nil
+            runtimeUpdateState = "运行时异常，已恢复到可用版本；失败的任务可手动重试"
+            return (location.executable, location.script)
+        } catch {
+            runtimeUpdateState = "运行时恢复失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
     public func checkForRuntimeUpdate() async {
         guard runtimeInstaller != nil, !runtimeBusy, AgentRuntimeManifest.validVersion(runtimeVersion) else { return }
         runtimeBusy = true
         defer { runtimeBusy = false }
         runtimeUpdateState = "正在检查更新"
         do {
-            availableRuntime = try await AgentRuntimeReleaseFeed.latest(currentVersion: runtimeVersion) { request in
+            runtimeUpdateCandidates = try await AgentRuntimeReleaseFeed.candidates(currentVersion: runtimeVersion) { request in
                 try await URLSession.shared.data(for: request)
             }
+            availableRuntime = runtimeUpdateCandidates.first
             UserDefaults.standard.set(Date(), forKey: "agentRuntime.lastSuccessfulCheck")
             runtimeUpdateState = availableRuntime.map { "发现运行时 \($0.version)" } ?? "运行时已是最新版本"
         } catch {
+            runtimeUpdateCandidates = []
             availableRuntime = nil
             runtimeUpdateState = "检查失败：\(error.localizedDescription)"
         }
@@ -170,25 +191,41 @@ public final class TrendingAppModel: ObservableObject {
         defer { runtimeBusy = false }
         runtimeUpdateState = "正在下载运行时 \(release.version)"
         do {
-            let (file, response) = try await URLSession.shared.download(from: release.downloadURL, delegate: RuntimeDownloadDelegate())
-            defer { try? FileManager.default.removeItem(at: file) }
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                  RuntimeDownloadDelegate.allowed(response.url),
-                  (try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= RuntimeDownloadDelegate.maximumSize else {
-                throw AgentRuntimeInstallError.invalidPackage
+            let candidates = runtimeUpdateCandidates.isEmpty ? [release] : runtimeUpdateCandidates
+            guard let installedRelease = try await AgentRuntimeReleaseFeed.firstCompatible(candidates, validate: { [self] candidate in
+                try await downloadAndInstallRuntime(candidate, installer: runtimeInstaller)
+            }) else {
+                runtimeUpdateCandidates = []
+                availableRuntime = nil
+                runtimeUpdateState = "可用更新均需要不同的应用或系统版本，请查看发布说明"
+                return
             }
-            runtimeUpdateState = "正在验证和安装运行时"
-            _ = try await runtimeInstaller.install(dmg: file, release: release)
-            let location = try await runtimeInstaller.resolveActive()
+            // Installation has committed. Complete activation independently of
+            // the initiating UI task's cancellation to keep disk and bridge aligned.
+            let location = try await Task { try await runtimeInstaller.resolveActive() }.value
             await agentBridge.useRuntime(executable: location.executable, script: location.script)
             runtimeVersion = location.version
             runtimePiVersion = location.piVersion
             runtimeCanRollback = (try await runtimeInstaller.selection()).active != nil
             availableRuntime = nil
-            runtimeUpdateState = location.version == release.version && !location.recovered
+            runtimeUpdateCandidates = []
+            runtimeUpdateState = location.version == installedRelease.version && !location.recovered
                 ? "安装完成；当前任务结束后启用"
                 : "新版本未能启动，已恢复到可用的运行时"
         } catch { runtimeUpdateState = "更新失败：\(error.localizedDescription)" }
+    }
+
+    private func downloadAndInstallRuntime(_ release: AgentRuntimeRelease, installer: AgentRuntimeInstaller) async throws {
+        runtimeUpdateState = "正在下载并检查运行时 \(release.version) 的兼容性"
+        let (file, response) = try await URLSession.shared.download(from: release.downloadURL, delegate: RuntimeDownloadDelegate())
+        defer { try? FileManager.default.removeItem(at: file) }
+        try ReleaseFeed.validateResponse(response)
+        guard RuntimeDownloadDelegate.allowed(response.url),
+              (try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= RuntimeDownloadDelegate.maximumSize else {
+            throw AgentRuntimeInstallError.invalidPackage
+        }
+        runtimeUpdateState = "正在验证和安装运行时 \(release.version)"
+        _ = try await installer.install(dmg: file, release: release)
     }
 
     public func rollbackRuntime() async {
@@ -198,12 +235,13 @@ public final class TrendingAppModel: ObservableObject {
         runtimeUpdateState = "正在回退运行时"
         do {
             _ = try await runtimeInstaller.rollback()
-            let location = try await runtimeInstaller.resolveActive()
+            let location = try await Task { try await runtimeInstaller.resolveActive() }.value
             await agentBridge.useRuntime(executable: location.executable, script: location.script)
             runtimeVersion = location.version
             runtimePiVersion = location.piVersion
             runtimeCanRollback = (try await runtimeInstaller.selection()).active != nil
             availableRuntime = nil
+            runtimeUpdateCandidates = []
             runtimeUpdateState = location.recovered ? "回退版本不可用，已恢复到可用的运行时" : "回退完成；当前任务结束后启用"
         } catch { runtimeUpdateState = "回退失败：\(error.localizedDescription)" }
     }
@@ -1075,9 +1113,7 @@ public final class TrendingAppModel: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                throw AppUpdateError.unavailable
-            }
+            try ReleaseFeed.validateResponse(response)
             availableRelease = try ReleaseFeed.parse(data, currentVersion: currentVersion)
             updateState = availableRelease == nil ? "已是最新版本" : "发现版本 \(availableRelease?.version ?? "")"
         } catch {

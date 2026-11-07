@@ -134,6 +134,8 @@ public actor AgentBridge {
     private var executableURL: URL
     private var scriptURL: URL
     private var pendingRuntime: (executable: URL, script: URL)?
+    private var runtimeRecovery: (@Sendable (URL) async -> (executable: URL, script: URL)?)?
+    private var recoveryTask: Task<Void, Never>?
     private let coordinator = AgentTaskCoordinator()
     private var process: Process?
     private var stdin: FileHandle?
@@ -152,7 +154,12 @@ public actor AgentBridge {
     }
 
     deinit {
+        recoveryTask?.cancel()
         if process?.isRunning == true { process?.terminate() }
+    }
+
+    public func setRuntimeRecovery(_ recovery: @escaping @Sendable (URL) async -> (executable: URL, script: URL)?) {
+        runtimeRecovery = recovery
     }
 
     /// New tasks continue using the current process until existing work finishes.
@@ -172,7 +179,7 @@ public actor AgentBridge {
     private func activatePendingRuntimeIfIdle() {
         guard streams.isEmpty, discoveryRequests.isEmpty, let pending = pendingRuntime else { return }
         pendingRuntime = nil
-        if let generation { disconnected(error: AgentBridgeError.processExited, generation: generation) }
+        if let generation { disconnected(error: AgentBridgeError.processExited, generation: generation, recover: false) }
         executableURL = pending.executable
         scriptURL = pending.script
     }
@@ -184,6 +191,7 @@ public actor AgentBridge {
         guard (1...12).contains(maxModelRequests) else { throw AgentBridgeError.protocolViolation }
         let permit = try await coordinator.acquire(lane)
         do {
+            await recoveryTask?.value
             try Task.checkCancellation()
             try ensureStarted()
         } catch {
@@ -219,11 +227,12 @@ public actor AgentBridge {
     }
 
     public func closeSession(_ sessionID: String) throws {
-        try ensureStarted()
+        guard process?.isRunning == true, recoveryTask == nil else { return }
         try send(Request(id: UUID().uuidString, method: "closeSession", params: CloseParams(sessionID: sessionID)))
     }
 
     public func discoverMCPTools(config: AgentMCPServer.Configuration) async throws -> AgentMCPDiscovery {
+        await recoveryTask?.value
         try Task.checkCancellation()
         try ensureStarted()
         let requestID = UUID().uuidString
@@ -278,7 +287,10 @@ public actor AgentBridge {
 
     private func ensureStarted() throws {
         if process?.isRunning == true { return }
-        if let generation { disconnected(error: AgentBridgeError.processExited, generation: generation) }
+        if let generation {
+            disconnected(error: AgentBridgeError.processExited, generation: generation)
+            throw AgentBridgeError.processExited
+        }
         let child = Process()
         let input = Pipe()
         let output = Pipe()
@@ -289,7 +301,11 @@ public actor AgentBridge {
         child.standardOutput = output
         child.standardError = FileHandle.nullDevice
         child.environment = ["PATH": "/usr/bin:/bin", "PI_OFFLINE": "1"]
-        do { try child.run() } catch { throw AgentBridgeError.unavailable("无法启动 Agent 运行时。") }
+        do { try child.run() }
+        catch {
+            beginRuntimeRecovery()
+            throw AgentBridgeError.unavailable("无法启动 Agent 运行时。")
+        }
         process = child
         let generation = UUID()
         self.generation = generation
@@ -379,7 +395,7 @@ public actor AgentBridge {
         }
     }
 
-    private func disconnected(error: Error, generation: UUID) {
+    private func disconnected(error: Error, generation: UUID, recover: Bool = true) {
         guard self.generation == generation else { return }
         self.generation = nil
         for stream in streams.values { stream.finish(throwing: error) }
@@ -396,6 +412,22 @@ public actor AgentBridge {
         if process?.isRunning == true { process?.terminate() }
         process = nil
         stdin = nil
+        if recover && pendingRuntime == nil { beginRuntimeRecovery() }
         activatePendingRuntimeIfIdle()
+    }
+
+    private func beginRuntimeRecovery() {
+        guard recoveryTask == nil, let runtimeRecovery else { return }
+        let failedScript = scriptURL
+        recoveryTask = Task { [weak self] in
+            let fallback = await runtimeRecovery(failedScript)
+            await self?.completeRuntimeRecovery(fallback, failedScript: failedScript)
+        }
+    }
+
+    private func completeRuntimeRecovery(_ fallback: (executable: URL, script: URL)?, failedScript: URL) {
+        recoveryTask = nil
+        guard scriptURL == failedScript, let fallback else { return }
+        useRuntime(executable: fallback.executable, script: fallback.script)
     }
 }

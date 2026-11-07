@@ -167,6 +167,10 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end('<!doctype html><html><body><ol><li class="b_algo"><h2><a href="/article">测试搜索结果</a></h2><div class="b_caption"><p>搜索摘要</p></div></li></ol></body></html>');
     return;
   }
+  if (url.pathname === "/baidu-safety") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end('<!doctype html><html><head><title>百度安全验证</title></head><body>网络不给力，请稍后重试</body></html>');
+    return;
+  }
   const authenticated = (request.headers.cookie ?? "").includes("test_session=fixture");
   const title = url.pathname === "/login" ? "测试登录" : "测试文章";
   const text = url.pathname === "/long" ? "甲".repeat(9000) + "终点" : url.pathname === "/login" ? "已建立测试登录状态" : authenticated ? "登录后可见的文章正文" : "游客内容";
