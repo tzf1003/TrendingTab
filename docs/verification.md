@@ -1,5 +1,9 @@
 # 验证记录
 
+2026-11-07 正式版 [v0.2.43](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.43) 对应提交 `3c74151a2d80`，[CI 42350291691](https://github.com/tzf1003/TrendingTab/actions/runs/42350291691) 的构建、Intel 原生验证和发布作业全部成功。实际应用 DMG SHA-256 为 `a7c84f860c3fa8f2c839bbcbc36dd21c2e5dd99bc8f2641aa042e2fbb86c02e2`，Runtime 0.1.4 镜像为 `21df22de13c1a1389c547844df86ea40e81aa731a672d8c2aae06baaaec7e1bc`，均与附带校验文件及 GitHub 资产 digest 一致。本机镜像、公证票据、应用与 Widget 运行身份、Developer ID 签名校验通过；应用、Widget、Runtime 为双架构，原生及 Rosetta 健康检查均包含 `scroll_ai_page`，Pi 为 1.5.0。使用实际公证 Runtime 镜像执行生产安装器的安装、回退、重新安装与恢复测试通过。本机 Gatekeeper 评估返回 Notarized Developer ID，并显示 `override=security disabled`；启用 Gatekeeper 的检查由 CI 执行。
+
+通过应用内一键更新安装到 `/Applications/TrendingTab.app` 后，实际版本为 0.2.43，当前使用随包 Runtime 0.1.4。在保留的知乎登录会话中，真实模型打开当前原文并向下滚动；选择 AI 标签预览后，连续追问成功向上滚动，同一标签随后读取正文并返回有效 `[E1]` 引用。页面滚动条和正文位置的实际变化与研究过程一致。首次模型连接失败，重试后完成打开和向下滚动，后续模型请求曾超时；后两轮向上滚动及读取回答完成。界面累计显示 8 次模型请求、约 47,226 tokens，包含失败请求估算。此验收覆盖该知乎页面的控制、追问和读取，不代表所有网站的交互能力。自动采集与自动分析从本机设置回读均为开启，采集间隔 900 秒。
+
 2026-11-07 新增 AI 页面上下滚动工具，Runtime 为 0.1.4。使用实际 Pi 子进程、本地模拟模型及 WebKit 验证 `open_ai_page → scroll_ai_page → read_ai_page`，取得滚动后加载的正文并登记引用；另验证整页、内层正文区域、向上滚动、连续追问复用、旧元素标识失效，以及用户页面 URL、滚动位置和选中标签保持。其他对话、用户标签、接管后及结束后的请求不能滚动该页面。工具进度分别显示观察、查找、读取、滚动和展开。
 
 本地完整浏览器回归共 63 项，2 项真实网络测试按配置跳过，没有意外失败；既有网页脚本后台 POST 边界继续记录为预期失败。结果为 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_15-10-01-+0800.xcresult`，完整日志为 `browser-scroll-full.log`。Swift 回归共 90 项、4 项环境跳过、零失败，主应用 Debug 构建及 Pi 协议、元数据、MCP 回归通过。此项记录为本地模拟模型和测试站点验证，真实站点及发布制品单独验收。
