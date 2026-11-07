@@ -94,7 +94,7 @@ if [[ "$signing_mode" == developer-id && -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; t
 fi
 image="$output_dir/TrendingTab-AgentRuntime-$version.dmg"
 [[ ! -e "$image" ]] || { echo "Runtime image already exists" >&2; exit 1; }
-hdiutil create -quiet -volname "TrendingTab Agent Runtime" -srcfolder "$app:h" -format UDZO "$image"
+zsh "$root/scripts/create-dmg-with-retry.sh" "$app:h" "$image" "TrendingTab Agent Runtime"
 if [[ "$signing_mode" == developer-id ]]; then
   codesign --force --sign "$identity" "${timestamp[@]}" "$image"
   codesign --verify --strict "$image"

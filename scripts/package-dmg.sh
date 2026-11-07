@@ -228,12 +228,7 @@ mkdir -p "$staging"
 ditto "$app" "$staging/$app_name.app"
 ln -s /Applications "$staging/Applications"
 
-hdiutil create \
-  -volname "$app_name" \
-  -srcfolder "$staging" \
-  -ov \
-  -format UDZO \
-  "$dmg"
+zsh "$root/scripts/create-dmg-with-retry.sh" "$staging" "$dmg" "$app_name"
 hdiutil verify "$dmg"
 
 if [[ "$signing_mode" == "developer-id" ]]; then

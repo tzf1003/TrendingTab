@@ -37,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           zsh scripts/test-staple-retry.sh
+          zsh scripts/test-create-dmg-retry.sh
           [[ "$MARKETING_VERSION" =~ ^[0-9]{1,7}\.[0-9]{1,7}\.[0-9]{1,7}$ ]]
           test "$(node -p 'require("./AgentRuntime/package.json").version')" = "$MARKETING_VERSION"
           names="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name')"

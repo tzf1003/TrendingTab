@@ -48,6 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           zsh scripts/test-staple-retry.sh
+          zsh scripts/test-create-dmg-retry.sh
           runtime="$RUNNER_TEMP/agent-runtime-test"
           zsh scripts/prepare-agent-runtime.sh "$runtime"
           cp AgentRuntime/test-runtime.mjs AgentRuntime/test-runtime-metadata.mjs AgentRuntime/test-mcp-client.mjs AgentRuntime/test-mcp-server.mjs "$runtime/"

@@ -1,5 +1,7 @@
 # 验证记录
 
+正式构建 [CI 42380256791](https://github.com/tzf1003/TrendingTab/actions/runs/42380256791) 在应用及 Widget 签名验证通过后，因 `hdiutil create` 返回 `Resource busy` 而终止，未发布版本。两个打包入口随后共用有限重试：仅对该占用错误最多尝试三次，其他错误立即失败；镜像在临时目录创建，成功后替换目标文件。脚本回归验证临时占用后成功、持续占用终止、其他错误不重试，以及失败保留原文件并清理临时产物。使用真实 `hdiutil` 在外接构建卷创建小型镜像并完成校验，工作流语法检查通过。
+
 搜索入口回归补齐 API 密钥缺失时的网页路线：Brave、Tavily 未保存有效密钥时尝试所选网页搜索，保留关键词、站点与时间条件并说明使用网页入口；显式网页搜索不会读取 API 密钥。两项路由测试通过研究导航策略观察地址并阻止实际联网，因此不代表真实搜索结果已返回。随后完整浏览器回归 75 项、2 项真实网络跳过、1 项网页后台请求预期失败、零意外失败，结果为 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_21-26-09-+0800.xcresult`；主应用 Debug 构建和工作流语法检查通过。
 
 使用 v0.2.50 的正式客户端完成两种 MCP 外部服务互通：Streamable HTTP 调用 `https://mcp.context7.com/mcp` 的 `resolve-library-id`，返回 SwiftUI 文档条目与有效库标识；stdio 使用官方 `@modelcontextprotocol/server-everything@2.2.1`，仅启用 `echo`，授权回调一次后收到 `Echo: TrendingTab reference interoperability`。客户端使用随包 Node 22.19.0，参考服务器因其运行要求使用本机 Node 26.13.0。这些检查覆盖生产传输客户端与真实外部服务，不代表已完成实际模型和界面授权卡的整条调用链路。两份本地证明文件位于外接盘 `lifecycle-acceptance/mcp-http-proof.json` 与 `mcp-stdio-proof.json`。
