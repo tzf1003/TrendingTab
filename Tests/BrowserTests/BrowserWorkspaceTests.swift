@@ -239,7 +239,10 @@ final class BrowserWorkspaceTests: XCTestCase {
         let marker = try XCTUnwrap(first.range(of: "链接标识："))
         let oldReference = try XCTUnwrap(first[marker.upperBound...].split(separator: "\n").first).description
         broker.finishRun("first")
+        for _ in 0..<13 { workspace.newTab(owner: .agent, taskID: "first", select: false) }
+        workspace.selectTab(tab)
         XCTAssertTrue(broker.researchContext(itemID: "conversation").contains(tab.id.uuidString))
+        XCTAssertTrue(broker.researchContext(itemID: "conversation").contains("当前预览"))
         XCTAssertFalse(broker.researchContext(itemID: "another").contains(tab.id.uuidString))
         let reading = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
                                                runID: "follow-up", itemID: "conversation", taskTitle: "追问")
@@ -260,6 +263,34 @@ final class BrowserWorkspaceTests: XCTestCase {
         let reopened = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
                                                 runID: "reopened", itemID: "conversation", taskTitle: "重新开始")
         XCTAssertTrue(reopened.contains("不属于当前"), reopened)
+    }
+
+    func testPopupOwnershipFollowsCurrentController() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let parent = workspace.newTab(owner: .agent, taskID: "run", url: base.appendingPathComponent("article"), select: false)
+        try await waitUntil { parent.finishedRevision > 0 && !parent.webView.isLoading }
+        parent.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        _ = try await parent.webView.evaluateJavaScript("window.open('/long', '_blank'); void 0")
+        try await waitUntil { workspace.tabs.count == 2 }
+        let agentChild = try XCTUnwrap(workspace.tabs.last)
+        XCTAssertEqual(agentChild.owner, .agent)
+        XCTAssertEqual(agentChild.agentTaskID, "run")
+        XCTAssertNil(workspace.selectedID)
+        workspace.selectTab(parent)
+        workspace.takeControl(parent)
+        _ = try await parent.webView.evaluateJavaScript("window.open('/article', '_blank'); void 0")
+        try await waitUntil { workspace.tabs.count == 3 }
+        let userChild = try XCTUnwrap(workspace.tabs.last)
+        XCTAssertEqual(userChild.owner, .user)
+        XCTAssertNil(userChild.agentTaskID)
+        XCTAssertEqual(workspace.selectedID, userChild.id)
+        try await waitUntil { userChild.finishedRevision > 0 && !userChild.webView.isLoading }
+        let broker = BrowserToolBroker(workspace: workspace)
+        let denied = try await broker.execute(request(.readAIPage, ["tabID": userChild.id.uuidString]),
+                                              runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(denied.contains("不属于当前"), denied)
     }
 
     func testSamePageFragmentDoesNotExhaustResearchLoadingCapacity() async throws {

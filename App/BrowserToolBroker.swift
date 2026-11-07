@@ -750,12 +750,17 @@ final class BrowserToolBroker: ObservableObject {
     }
 
     func researchContext(itemID: String) -> String {
-        let pages = workspace.tabs.filter { tab in
-            tab.owner == .agent && tab.agentTaskID.flatMap { runItems[$0] } == itemID
-        }.suffix(12).compactMap { tab -> String? in
+        var conversationPages = Array(workspace.tabs.filter { tab in
+            tab.owner == .agent && tab.webView.url != nil && tab.agentTaskID.flatMap { runItems[$0] } == itemID
+        }.reversed())
+        if let selected = conversationPages.firstIndex(where: { $0.id == workspace.selectedID }) {
+            conversationPages.insert(conversationPages.remove(at: selected), at: 0)
+        }
+        let pages = conversationPages.prefix(12).compactMap { tab -> String? in
             guard let url = tab.webView.url else { return nil }
             let state = tab.userTookControl ? "用户已接管，请另开 AI 标签" : "可读取和观察"
-            return "页面标识：\(tab.id.uuidString)；状态：\(state)；地址：\(publicAddress(url))"
+            let preview = tab.id == workspace.selectedID ? "；当前预览" : ""
+            return "页面标识：\(tab.id.uuidString)；状态：\(state)\(preview)；地址：\(publicAddress(url))"
         }
         let evidenceContext = evidence.followUpContext(itemID: itemID)
         guard !pages.isEmpty else { return evidenceContext }

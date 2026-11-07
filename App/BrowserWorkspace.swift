@@ -452,11 +452,12 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         let parent = tabs.first { $0.webView === webView }
-        let owner = parent?.owner ?? .user
-        if owner == .agent, parent?.userTookControl != true,
+        let owner: Owner = parent?.userTookControl == true ? .user : (parent?.owner ?? .user)
+        if owner == .agent,
            let url = navigationAction.request.url, !allowsResearchNavigation(to: url) { return nil }
-        let child = addTab(owner: owner, taskID: parent?.agentTaskID, configuration: configuration, url: nil, select: false)
-        if owner == .user || parent?.userTookControl == true { selectTab(child) }
+        let child = addTab(owner: owner, taskID: owner == .agent ? parent?.agentTaskID : nil,
+                           configuration: configuration, url: nil, select: false)
+        if owner == .user { selectTab(child) }
         return child.webView
     }
 }
