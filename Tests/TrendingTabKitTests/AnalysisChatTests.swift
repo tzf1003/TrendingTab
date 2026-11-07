@@ -5,7 +5,58 @@ import TrendingTabIntelligence
 import TrendingTabKit
 import TrendingTabNetworking
 
+@MainActor
+private final class EvidenceSnapshotFixture {
+    var ids: Set<String> = []
+}
+
 final class AnalysisChatTests: XCTestCase {
+    @MainActor
+    func testFollowUpEvidenceCannotValidateEarlierAnswer() async throws {
+        let fixture = ChatFixture([.init(Self.chat("尚未读取的材料 [E1]")), .init(Self.chat("已读取的材料 [E1]"))])
+        let model = AnalysisChatModel(session: fixture.session)
+        let connection = Self.connection(.openAIChat, fixture)
+        var ledger = ResearchEvidenceLedger()
+        let available: AnalysisChatModel.EvidenceSnapshot = { Set(ledger.records.filter { $0.itemID == "a" }.map(\.id)) }
+        model.send("第一轮", itemID: "a", evidence: "标题", connection: connection, credential: "fixture",
+                   evidenceSnapshot: available)
+        try await waitUntil { !model.session(for: "a").isStreaming }
+        let first = try XCTUnwrap(model.session(for: "a").messages.last)
+        XCTAssertTrue(first.evidenceIDs.isEmpty)
+        _ = ledger.register(itemID: "a", runID: "follow-up", title: "报道", url: URL(string: "https://example.com/story")!,
+                            level: .pageText, content: "已读取材料")
+        model.send("第二轮", itemID: "a", evidence: ledger.followUpContext(itemID: "a"), connection: connection, credential: "fixture",
+                   evidenceSnapshot: available)
+        try await waitUntil { !model.session(for: "a").isStreaming }
+        let messages = model.session(for: "a").messages
+        XCTAssertEqual(messages[1].evidenceIDs, first.evidenceIDs)
+        let old = ledger.citations(in: first.text, itemID: "a", allowedEvidenceIDs: first.evidenceIDs)
+        XCTAssertTrue(old.valid.isEmpty)
+        XCTAssertEqual(old.unknown, ["E1"])
+        let latest = try XCTUnwrap(messages.last)
+        XCTAssertEqual(latest.evidenceIDs, ["E1"])
+        XCTAssertEqual(ledger.citations(in: latest.text, itemID: "a", allowedEvidenceIDs: latest.evidenceIDs).valid.map(\.id), ["E1"])
+        XCTAssertTrue(ledger.citations(in: latest.text, itemID: "b", allowedEvidenceIDs: latest.evidenceIDs).valid.isEmpty)
+    }
+
+    @MainActor
+    func testStoppedAnswerKeepsEvidenceScopeAndRetryTakesNewSnapshot() async throws {
+        let fixture = ChatFixture([.init(Self.delta("部分回答 [E1]"), open: true), .init(Self.chat("重试后的回答 [E1]"))])
+        let model = AnalysisChatModel(session: fixture.session)
+        let connection = Self.connection(.openAIChat, fixture)
+        let available = EvidenceSnapshotFixture()
+        let snapshot: AnalysisChatModel.EvidenceSnapshot = { available.ids }
+        model.send("问题", itemID: "a", evidence: "标题", connection: connection, credential: "fixture", evidenceSnapshot: snapshot)
+        try await waitUntil { model.session(for: "a").messages.last?.text == "部分回答 [E1]" }
+        model.cancel(itemID: "a")
+        available.ids = ["E1"]
+        XCTAssertTrue(model.session(for: "a").messages.last?.evidenceIDs.isEmpty == true)
+        model.retry(itemID: "a", evidence: "[E1] 新材料", connection: connection, credential: "fixture", evidenceSnapshot: snapshot)
+        try await waitUntil { !model.session(for: "a").isStreaming }
+        XCTAssertEqual(model.session(for: "a").messages.count, 2)
+        XCTAssertEqual(model.session(for: "a").messages.last?.evidenceIDs, ["E1"])
+    }
+
     func testLegacyStreamRetainsBasePath() async throws {
         let fixture = ChatFixture([.init(Self.chat("回答"))])
         let provider = Self.provider(.openAIChat, fixture)

@@ -10,11 +10,13 @@ public struct AnalysisChatMessage: Identifiable, Sendable, Equatable {
     public var id: UUID
     public var role: AnalysisChatRole
     public var text: String
+    public var evidenceIDs: Set<String>
 
-    public init(id: UUID = UUID(), role: AnalysisChatRole, text: String) {
+    public init(id: UUID = UUID(), role: AnalysisChatRole, text: String, evidenceIDs: Set<String> = []) {
         self.id = id
         self.role = role
         self.text = text
+        self.evidenceIDs = evidenceIDs
     }
 }
 
@@ -44,6 +46,7 @@ public struct AnalysisChatSession: Sendable, Equatable {
 @MainActor
 public final class AnalysisChatModel: ObservableObject {
     public typealias ToolHandler = @MainActor @Sendable (AgentStreamEvent.ToolRequest, String) async throws -> String
+    public typealias EvidenceSnapshot = @MainActor @Sendable () -> Set<String>
     @Published public private(set) var sessions: [String: AnalysisChatSession] = [:]
 
     private struct Run {
@@ -80,7 +83,8 @@ public final class AnalysisChatModel: ObservableObject {
     public func send(_ text: String, itemID: String, evidence: String, connection: AIConnection?, credential: String?,
                      headers: [String: String] = [:],
                      mcpServers: [AgentMCPServer] = [],
-                     toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil) {
+                     toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                     evidenceSnapshot: @escaping EvidenceSnapshot = { [] }) {
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, runs[itemID] == nil else { return }
         var state = session(for: itemID)
@@ -88,15 +92,16 @@ public final class AnalysisChatModel: ObservableObject {
             state.messages.removeLast()
         }
         state.messages.append(AnalysisChatMessage(role: .user, text: question))
-        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished)
+        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func retry(itemID: String, evidence: String, connection: AIConnection?, credential: String?,
                       headers: [String: String] = [:],
                       mcpServers: [AgentMCPServer] = [],
-                      toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil) {
+                      toolHandler: ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                      evidenceSnapshot: @escaping EvidenceSnapshot = { [] }) {
         guard runs[itemID] == nil, let state = sessions[itemID], state.error != nil else { return }
-        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished)
+        start(state, itemID: itemID, evidence: evidence, connection: connection, credential: credential, headers: headers, mcpServers: mcpServers, toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func cancel(itemID: String) {
@@ -130,7 +135,7 @@ public final class AnalysisChatModel: ObservableObject {
 
     private func start(_ current: AnalysisChatSession, itemID: String, evidence: String,
                        connection: AIConnection?, credential: String?, headers: [String: String], mcpServers: [AgentMCPServer], toolHandler: ToolHandler?,
-                       onRunFinished: (@MainActor @Sendable (String) -> Void)?) {
+                       onRunFinished: (@MainActor @Sendable (String) -> Void)?, evidenceSnapshot: @escaping EvidenceSnapshot) {
         var state = current
         guard let connection else {
             configurationError("请先配置用于新闻分析的 AI 连接。", itemID: itemID, state: state)
@@ -203,7 +208,7 @@ public final class AnalysisChatModel: ObservableObject {
                         if event.type == "text_delta", let delta = event.text {
                             receivedText = receivedText || !delta.isEmpty
                             outputBytes += delta.utf8.count
-                            self?.append(delta, itemID: itemID, answerID: answer.id)
+                            self?.append(delta, itemID: itemID, answerID: answer.id, evidenceIDs: evidenceSnapshot())
                         } else if let request = event.toolRequest {
                             let activity = switch request.name {
                             case AgentToolName.currentHotTopics.rawValue: "正在查看当前热榜…"
@@ -252,7 +257,7 @@ public final class AnalysisChatModel: ObservableObject {
                 } else {
                     for try await delta in provider.stream(system: system, messages: history) {
                         try Task.checkCancellation()
-                        self?.append(delta, itemID: itemID, answerID: answer.id)
+                        self?.append(delta, itemID: itemID, answerID: answer.id, evidenceIDs: evidenceSnapshot())
                     }
                 }
                 try Task.checkCancellation()
@@ -300,10 +305,13 @@ public final class AnalysisChatModel: ObservableObject {
         sessions[itemID] = state
     }
 
-    private func append(_ delta: String, itemID: String, answerID: UUID) {
+    private func append(_ delta: String, itemID: String, answerID: UUID, evidenceIDs: Set<String>) {
         guard runs[itemID]?.answerID == answerID,
               let index = sessions[itemID]?.messages.indices.last else { return }
         sessions[itemID]?.messages[index].text += delta
+        // Freeze the evidence available when this answer receives text. Later
+        // research must not retroactively validate an earlier answer's IDs.
+        sessions[itemID]?.messages[index].evidenceIDs = evidenceIDs
     }
 
     private func finish(itemID: String, answerID: UUID, error: String?) {

@@ -323,7 +323,10 @@ final class BrowserToolBroker: ObservableObject {
         case AgentToolName.searchWeb.rawValue:
             guard let query = request.arguments["query"]?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !query.isEmpty, query.count <= 256 else { return "请输入搜索关键词。" }
-            let search = ResearchSearchRequest(query: query, timeRange: request.arguments["timeRange"], domain: request.arguments["domain"])
+            guard let topic = ResearchSearchTopic(rawValue: request.arguments["topic"] ?? "general") else {
+                return "搜索类型无效，请选择 general 或 news。"
+            }
+            let search = ResearchSearchRequest(query: query, timeRange: request.arguments["timeRange"], domain: request.arguments["domain"], topic: topic)
             if let timeRange = request.arguments["timeRange"], !timeRange.isEmpty, search.timeRange == nil {
                 return "时间范围无效，请选择 day、week、month 或 year。"
             }
@@ -345,7 +348,10 @@ final class BrowserToolBroker: ObservableObject {
             do {
                 let destination = try ResearchWebSearch.destination(engine: engine, request: search)
                 let tab = try await openPage(destination.url, runID: runID)
-                let results = try await extractSearchResults(tab, engine: engine.rawValue, runID: runID, itemID: itemID)
+                var results = try await extractSearchResults(tab, engine: engine.rawValue, runID: runID, itemID: itemID)
+                if topic == .news {
+                    results = "当前使用通用网页搜索查找新闻；专门的新闻索引需要在设置中配置 Brave 或 Tavily。\n" + results
+                }
                 if search.timeRange != nil && !destination.timeFilterRequested { return "当前网页搜索未应用时间筛选，请核对发布时间。\n\(results)" }
                 if destination.timeFilterRequested { return "已请求搜索引擎按时间筛选，请核对来源的实际发布时间。\n\(results)" }
                 return results

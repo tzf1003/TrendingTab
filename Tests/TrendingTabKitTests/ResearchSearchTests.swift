@@ -46,6 +46,7 @@ final class ResearchSearchTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(results.first?.snippet, "摘要")
         let recorded = await transport.request
         let request = try XCTUnwrap(recorded)
+        XCTAssertEqual(request.url.path, "/res/v1/web/search")
         let query = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
         XCTAssertEqual(query.first(where: { $0.name == "q" })?.value, "热点 site:example.com")
         XCTAssertEqual(query.first(where: { $0.name == "freshness" })?.value, "pw")
@@ -65,6 +66,7 @@ final class ResearchSearchTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(body["time_range"] as? String, "day")
         XCTAssertEqual(body["include_domains"] as? [String], ["example.com"])
         XCTAssertEqual(body["include_published_date"] as? Bool, true)
+        XCTAssertEqual(body["topic"] as? String, "general")
         let failure = ResearchSearchService(transport: SearchTransport(status: 429, json: "{}"))
         do {
             _ = try await failure.search(provider: .tavily, credential: credential, request: .init(query: "热点"))
@@ -73,5 +75,52 @@ final class ResearchSearchTests: XCTestCase, @unchecked Sendable {
             XCTAssertTrue(error.localizedDescription.contains("429"))
         }
         XCTAssertNil(ResearchSearchRequest(query: "x", domain: "example.com/path").domain)
+    }
+
+    func testBraveNewsUsesNewsIndexAndTopLevelResults() async throws {
+        let transport = SearchTransport(json: #"{"results":[{"title":"新闻报道","url":"https://example.com/news","description":null,"page_age":"2026-11-07"}]}"#)
+        let results = try await ResearchSearchService(transport: transport).search(provider: .brave,
+            credential: "fixture", request: .init(query: "事件", timeRange: "day", domain: "example.com", topic: .news))
+        XCTAssertEqual(results.first?.title, "新闻报道")
+        XCTAssertEqual(results.first?.snippet, "")
+        XCTAssertEqual(results.first?.published, "2026-11-07")
+        let recorded = await transport.request
+        let request = try XCTUnwrap(recorded)
+        XCTAssertEqual(request.url.path, "/res/v1/news/search")
+        let query = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(query.first(where: { $0.name == "q" })?.value, "事件 site:example.com")
+        XCTAssertEqual(query.first(where: { $0.name == "freshness" })?.value, "pd")
+    }
+
+    func testTavilyNewsRetainsTimeAndSiteScope() async throws {
+        let transport = SearchTransport(json: #"{"results":[]}"#)
+        let results = try await ResearchSearchService(transport: transport).search(provider: .tavily,
+            credential: "fixture", request: .init(query: "事件", timeRange: "week", domain: "example.com", topic: .news))
+        XCTAssertTrue(results.isEmpty)
+        let recorded = await transport.request
+        let request = try XCTUnwrap(recorded)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.body)) as? [String: Any])
+        XCTAssertEqual(body["topic"] as? String, "news")
+        XCTAssertEqual(body["time_range"] as? String, "week")
+        XCTAssertEqual(body["include_domains"] as? [String], ["example.com"])
+    }
+
+    func testBraveMalformedResponseIsNotAnEmptySearch() async throws {
+        for topic in [ResearchSearchTopic.general, .news] {
+            do {
+                _ = try await ResearchSearchService(transport: SearchTransport(json: "{}")).search(provider: .brave,
+                    credential: "fixture", request: .init(query: "事件", topic: topic))
+                XCTFail("缺失结果字段必须报告解析错误")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("无法解析"))
+            }
+        }
+    }
+
+    func testBraveWebCanOmitUnavailableResultGroups() async throws {
+        let transport = SearchTransport(json: #"{"type":"search","query":{"original":"事件"}}"#)
+        let results = try await ResearchSearchService(transport: transport).search(provider: .brave,
+            credential: "fixture", request: .init(query: "事件"))
+        XCTAssertTrue(results.isEmpty)
     }
 }

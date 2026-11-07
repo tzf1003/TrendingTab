@@ -60,7 +60,7 @@ metadata = {
     "LSMinimumSystemVersion": "14.0.0",
     "LSBackgroundOnly": True,
     "TrendingTabPiVersion": sys.argv[3],
-    "TrendingTabMinimumAppVersion": "0.2.0",
+    "TrendingTabMinimumAppVersion": "0.2.44",
     "TrendingTabMaximumAppVersion": "99.0.0",
     "TrendingTabMinimumProtocol": 1,
     "TrendingTabMaximumProtocol": 1,

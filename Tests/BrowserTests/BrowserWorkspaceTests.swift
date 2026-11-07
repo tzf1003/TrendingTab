@@ -450,6 +450,18 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertTrue(broker.evidence.records.isEmpty)
     }
 
+    func testSearchRejectsInvalidTopicBeforeOpeningPage() async throws {
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let broker = BrowserToolBroker(workspace: workspace)
+        let result = try await broker.execute(
+            request(.searchWeb, ["query": "新闻", "topic": "unknown"]),
+            runID: "run", itemID: "item", taskTitle: "研究"
+        )
+        XCTAssertTrue(result.contains("搜索类型无效"), result)
+        XCTAssertTrue(workspace.tabs.isEmpty)
+        XCTAssertTrue(broker.evidence.records.isEmpty)
+    }
+
     func testMCPToolRequiresExplicitApprovalAndCancellationClearsRequest() async throws {
         var enabled = true
         let broker = BrowserToolBroker(workspace: BrowserWorkspace(dataStore: .nonPersistent()), mcpIsEnabled: { _, _ in enabled })

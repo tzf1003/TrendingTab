@@ -43,8 +43,8 @@ struct EventCenterView: View {
                     draft: chatDraft(for: openedRow?.id),
                     researchMode: $researchMode,
                     hasConnection: hasAnalysisConnection,
-                    send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
-                    retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }) },
+                    send: { text, id in model.sendChatMessage(text, itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }, evidenceSnapshot: evidenceSnapshot(for: id)) },
+                    retry: { id in model.retryChat(itemID: id, evidenceFallback: fallbackEvidence(for: id), researchContext: browserTools.researchContext(itemID: id), toolHandler: researchHandler(for: id), onRunFinished: { browserTools.finishRun($0) }, evidenceSnapshot: evidenceSnapshot(for: id)) },
                     openSource: { missingStoryURL = false; browser.openStory($0, inNewTab: true) },
                     endSession: { id in model.analysisChat.clear(itemID: id); browserTools.endSession(itemID: id) },
                     close: { showsChat = false }
@@ -545,7 +545,11 @@ struct EventCenterView: View {
         let session = model.analysisChat.session(for: itemID)
         guard hasAnalysisConnection, session.messages.isEmpty, !session.isStreaming, session.error == nil else { return }
         model.sendChatMessage(AnalysisConversationView.initialPrompt, itemID: itemID, evidenceFallback: fallbackEvidence(for: itemID),
-                              toolHandler: researchHandler(for: itemID), onRunFinished: { browserTools.finishRun($0) })
+                              toolHandler: researchHandler(for: itemID), onRunFinished: { browserTools.finishRun($0) }, evidenceSnapshot: evidenceSnapshot(for: itemID))
+    }
+
+    private func evidenceSnapshot(for itemID: String) -> AnalysisChatModel.EvidenceSnapshot {
+        { Set(browserTools.evidence.records.filter { $0.itemID == itemID }.map(\.id)) }
     }
 
     private func researchHandler(for itemID: String) -> AnalysisChatModel.ToolHandler? {
@@ -1067,7 +1071,7 @@ private struct AnalysisConversationView: View {
 
     private func messageView(_ message: AnalysisChatMessage, itemID: String) -> some View {
         let isUser = if case .user = message.role { true } else { false }
-        let citations = browserTools.evidence.citations(in: message.text, itemID: itemID)
+        let citations = browserTools.evidence.citations(in: message.text, itemID: itemID, allowedEvidenceIDs: message.evidenceIDs)
         return VStack(alignment: .leading, spacing: 6) {
             Label(isUser ? "你" : "AI", systemImage: isUser ? "person.crop.circle" : "sparkles")
                 .font(.system(size: 12, weight: .semibold))

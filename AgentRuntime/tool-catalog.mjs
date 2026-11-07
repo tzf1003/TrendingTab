@@ -52,8 +52,9 @@ export const toolCatalog = {
       offset: Type.Optional(Type.String({ maxLength: 6, pattern: "^[0-9]+$" })) }, { additionalProperties: false }),
   },
   search_web: {
-    label: "搜索网页", description: "使用网页搜索与事件相关的材料，返回标题、摘要及可打开的结果标识。",
+    label: "搜索网页与新闻", description: "搜索与事件相关的材料，返回标题、摘要及可打开的结果标识。topic=news 使用已配置 API 的新闻索引；网页入口使用通用搜索并注明。",
     parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 256 }),
+      topic: Type.Optional(Type.Union([Type.Literal("general"), Type.Literal("news")])),
       timeRange: Type.Optional(Type.Union([Type.Literal("day"), Type.Literal("week"), Type.Literal("month"), Type.Literal("year")])),
       domain: Type.Optional(Type.String({ maxLength: 253 })) }, { additionalProperties: false }),
   },

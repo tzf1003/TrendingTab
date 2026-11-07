@@ -19,7 +19,7 @@ const server = createServer(async (request, response) => {
     const finished = body.messages.some((message) => message.role === "tool");
     const mcp = serialized.includes("调用MCP");
     const delta = finished
-      ? { role: "assistant", content: serialized.includes("来自原生端") || serialized.includes("连接测试已收到工具调用") || (mcp && serialized.includes("mcp-evidence")) ? "工具完成" : "结果错误" }
+      ? { role: "assistant", content: serialized.includes("来自原生端") || serialized.includes("连接测试已收到工具调用") || (mcp && serialized.includes("mcp-evidence")) ? (serialized.includes("调用工具并引用") ? "工具完成 [E1]" : "工具完成") : "结果错误" }
       : { role: "assistant", tool_calls: [{ index: 0, id: "fixture-call", type: "function",
           function: mcp ? { name: "mcp_call_tool", arguments: JSON.stringify({ serverID: "fixture", toolName: "echo", argumentsJSON: JSON.stringify({ value: "mcp-evidence" }) }) }
             : { name: "open_ai_page", arguments: '{"url":"https://example.com/"}' } }] };

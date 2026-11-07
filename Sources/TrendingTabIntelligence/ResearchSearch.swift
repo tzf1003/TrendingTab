@@ -5,6 +5,10 @@ public enum ResearchSearchProvider: String, CaseIterable, Sendable {
     case web, brave, tavily
 }
 
+public enum ResearchSearchTopic: String, Sendable {
+    case general, news
+}
+
 public struct ResearchSearchResult: Decodable, Sendable {
     public let title: String
     public let url: String
@@ -23,9 +27,11 @@ public struct ResearchSearchRequest: Sendable {
     public let query: String
     public let timeRange: String?
     public let domain: String?
+    public let topic: ResearchSearchTopic
 
-    public init(query: String, timeRange: String? = nil, domain: String? = nil) {
+    public init(query: String, timeRange: String? = nil, domain: String? = nil, topic: ResearchSearchTopic = .general) {
         self.query = query
+        self.topic = topic
         self.timeRange = ["day", "week", "month", "year"].contains(timeRange ?? "") ? timeRange : nil
         let domain = domain?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.domain = domain.range(of: #"^(?=.{1,253}$)[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)+$"#, options: .regularExpression) != nil ? domain : nil
@@ -87,7 +93,8 @@ public struct ResearchSearchService: Sendable {
         let response: HTTPResponse
         switch provider {
         case .brave:
-            var components = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
+            let index = request.topic == .news ? "news" : "web"
+            var components = URLComponents(string: "https://api.search.brave.com/res/v1/\(index)/search")!
             let query = request.domain.map { "\(request.query) site:\($0)" } ?? request.query
             components.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "count", value: "10")]
             let freshness = ["day": "pd", "week": "pw", "month": "pm", "year": "py"]
@@ -95,7 +102,7 @@ public struct ResearchSearchService: Sendable {
             guard let url = components.url else { throw SearchError.invalidQuery }
             response = try await transport.send(HTTPRequest(url: url, headers: ["Accept": "application/json", "X-Subscription-Token": credential], includeConditionalHeaders: false))
         case .tavily:
-            var body: [String: Any] = ["query": request.query, "max_results": 10, "topic": "general",
+            var body: [String: Any] = ["query": request.query, "max_results": 10, "topic": request.topic.rawValue,
                                        "include_raw_content": false, "include_published_date": true]
             if let range = request.timeRange { body["time_range"] = range }
             if let domain = request.domain { body["include_domains"] = [domain] }
@@ -107,7 +114,16 @@ public struct ResearchSearchService: Sendable {
             switch provider {
             case .brave:
                 let payload = try JSONDecoder().decode(BraveResponse.self, from: response.data)
-                return (payload.web?.results ?? []).map { ResearchSearchResult(title: $0.title, url: $0.url, snippet: $0.description ?? "", published: $0.pageAge ?? $0.age) }
+                let results: [BraveResponse.Result]
+                if let available = request.topic == .news ? payload.results : payload.web?.results {
+                    results = available
+                } else if request.topic == .general && payload.type == "search" {
+                    // Brave may omit result groups that have no available data.
+                    results = []
+                } else {
+                    throw SearchError.invalidResponse
+                }
+                return results.map { ResearchSearchResult(title: $0.title, url: $0.url, snippet: $0.description ?? "", published: $0.pageAge ?? $0.age) }
             case .tavily:
                 let payload = try JSONDecoder().decode(TavilyResponse.self, from: response.data)
                 return payload.results.map { ResearchSearchResult(title: $0.title, url: $0.url, snippet: $0.content ?? "", published: $0.publishedDate) }
@@ -136,6 +152,8 @@ public struct ResearchSearchService: Sendable {
             enum CodingKeys: String, CodingKey { case title, url, description, age; case pageAge = "page_age" }
         }
         let web: Container?
+        let results: [Result]?
+        let type: String?
     }
     private struct TavilyResponse: Decodable {
         struct Result: Decodable {

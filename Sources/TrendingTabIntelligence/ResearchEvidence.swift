@@ -55,7 +55,7 @@ public struct ResearchEvidenceLedger: Sendable {
         return blocks.reversed().joined(separator: "\n\n")
     }
 
-    public func citations(in text: String, itemID: String) -> (valid: [ResearchEvidence], unknown: [String]) {
+    public func citations(in text: String, itemID: String, allowedEvidenceIDs: Set<String>? = nil) -> (valid: [ResearchEvidence], unknown: [String]) {
         let pattern = #"\[(E[1-9][0-9]*)\]|【(E[1-9][0-9]*)】"#
         let regex = try! NSRegularExpression(pattern: pattern)
         let range = NSRange(text.startIndex..., in: text)
@@ -66,7 +66,8 @@ public struct ResearchEvidenceLedger: Sendable {
             guard let range = Range(match.range(at: 1), in: text) ?? Range(match.range(at: 2), in: text) else { continue }
             let id = String(text[range])
             guard seen.insert(id).inserted else { continue }
-            if let record = records.first(where: { $0.id == id && $0.itemID == itemID }) { valid.append(record) }
+            if allowedEvidenceIDs?.contains(id) != false,
+               let record = records.first(where: { $0.id == id && $0.itemID == itemID }) { valid.append(record) }
             else { unknown.append(id) }
         }
         return (valid, unknown)

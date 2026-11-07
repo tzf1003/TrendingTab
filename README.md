@@ -45,6 +45,7 @@ rtk env SIGNING_MODE=ad-hoc zsh scripts/package-dmg.sh
 - [接入新平台](docs/adding-a-source.md)
 - [AI 与提醒](docs/ai-and-alerts.md)
 - [验证记录](docs/verification.md)
+- [浏览器与 Pi 验收清单](docs/browser-agent-acceptance.md)
 
 ## 许可
 

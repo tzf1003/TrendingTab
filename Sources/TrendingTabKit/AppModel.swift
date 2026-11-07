@@ -780,7 +780,8 @@ public final class TrendingAppModel: ObservableObject {
         return try await AgentConnectionTester(bridge: agentBridge).test(kind, connection: connection, credential: credential, headers: connectionHeaders(connection))
     }
 
-    public func sendChatMessage(_ text: String, itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil) {
+    public func sendChatMessage(_ text: String, itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                                evidenceSnapshot: @escaping AnalysisChatModel.EvidenceSnapshot = { [] }) {
         let connection = connections.first { $0.id == assignment.analysis }
         let evidence = analysisEvidence(for: itemID)
         let material = evidence.isEmpty ? (evidenceFallback ?? "") : evidence
@@ -788,10 +789,11 @@ public final class TrendingAppModel: ObservableObject {
         analysisChat.send(text, itemID: itemID, evidence: context,
                           connection: connection,
                           credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) }, headers: connection.map(connectionHeaders) ?? [:],
-                          mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished)
+                          mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
-    public func retryChat(itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil) {
+    public func retryChat(itemID: String, evidenceFallback: String? = nil, researchContext: String = "", toolHandler: AnalysisChatModel.ToolHandler? = nil, onRunFinished: (@MainActor @Sendable (String) -> Void)? = nil,
+                          evidenceSnapshot: @escaping AnalysisChatModel.EvidenceSnapshot = { [] }) {
         let connection = connections.first { $0.id == assignment.analysis }
         let evidence = analysisEvidence(for: itemID)
         let material = evidence.isEmpty ? (evidenceFallback ?? "") : evidence
@@ -799,7 +801,7 @@ public final class TrendingAppModel: ObservableObject {
         analysisChat.retry(itemID: itemID, evidence: context,
                            connection: connection,
                            credential: connection.flatMap { KeychainStore.read(account: $0.credentialAccount) }, headers: connection.map(connectionHeaders) ?? [:],
-                           mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished)
+                           mcpServers: toolHandler == nil ? [] : MCPConfigurationStore.load().filter(\.enabled).map(\.server), toolHandler: toolHandler, onRunFinished: onRunFinished, evidenceSnapshot: evidenceSnapshot)
     }
 
     public func discoverMCPTools(config: AgentMCPServer.Configuration) async throws -> AgentMCPDiscovery {

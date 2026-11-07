@@ -5,6 +5,45 @@ import TrendingTabCore
 import TrendingTabKit
 
 final class AgentBridgeTests: XCTestCase {
+    @MainActor
+    func testPiAnswerBindsEvidenceCollectedDuringToolExecution() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let node = environment["TRENDINGTAB_TEST_NODE"], let runtime = environment["TRENDINGTAB_TEST_RUNTIME"] else {
+            throw XCTSkip("Set the Pi runtime paths to exercise tool evidence binding.")
+        }
+        let fixture = try XCTUnwrap(Bundle.module.url(forResource: "agent-model", withExtension: "mjs"))
+        let server = Process()
+        let output = Pipe()
+        server.executableURL = URL(fileURLWithPath: node)
+        server.arguments = [fixture.path]
+        server.standardOutput = output
+        server.standardError = FileHandle.nullDevice
+        try server.run()
+        defer { if server.isRunning { server.terminate() } }
+        let port = try XCTUnwrap(String(data: output.fileHandleForReading.availableData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines))
+        let connection = AIConnection(name: "Fixture", kind: .openAIChat,
+            baseURL: try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/v1")), model: "mock", credentialAccount: "fixture")
+        let chat = AnalysisChatModel(agentBridge: AgentBridge(executableURL: URL(fileURLWithPath: node), scriptURL: URL(fileURLWithPath: runtime)))
+        var ledger = ResearchEvidenceLedger()
+        chat.send("调用工具并引用", itemID: "item", evidence: "标题", connection: connection, credential: "fixture-token",
+                  toolHandler: { _, runID in
+                      let record = ledger.register(itemID: "item", runID: runID, title: "报道", url: URL(string: "https://example.com/story")!,
+                                                   level: .pageText, content: "工具读取的材料")
+                      return "来自原生端 [\(record.id)] 工具读取的材料"
+                  }, evidenceSnapshot: { Set(ledger.records.map(\.id)) })
+        for _ in 0..<500 {
+            if !chat.session(for: "item").isStreaming { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let session = chat.session(for: "item")
+        XCTAssertFalse(session.isStreaming)
+        XCTAssertNil(session.error)
+        let answer = try XCTUnwrap(session.messages.last)
+        XCTAssertEqual(answer.text, "工具完成 [E1]")
+        XCTAssertEqual(answer.evidenceIDs, ["E1"])
+        XCTAssertEqual(ledger.citations(in: answer.text, itemID: "item", allowedEvidenceIDs: answer.evidenceIDs).valid.map(\.id), ["E1"])
+    }
+
     func testFailedRuntimeRecoversForNextTaskWithoutReplayingFailedTask() async throws {
         guard let node = ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_NODE"] else {
             throw XCTSkip("Set the Node path to exercise runtime recovery.")
