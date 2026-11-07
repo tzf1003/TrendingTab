@@ -33,18 +33,58 @@ final class BrowserWorkspaceTests: XCTestCase {
         return (process, url)
     }
 
-    private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
+    private func waitUntil(_ description: String = "Condition did not become true", _ predicate: @MainActor () -> Bool) async throws {
         for _ in 0..<200 {
             if predicate() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
-        throw NSError(domain: "BrowserTestTimeout", code: 1)
+        throw NSError(domain: "BrowserTestTimeout", code: 1, userInfo: [NSLocalizedDescriptionKey: description])
     }
 
     private func request(_ name: AgentToolName, _ arguments: [String: String] = [:]) throws -> AgentStreamEvent.ToolRequest {
         let value: [String: Any] = ["requestID": UUID().uuidString, "toolCallID": UUID().uuidString,
                                     "name": name.rawValue, "arguments": arguments]
         return try JSONDecoder().decode(AgentStreamEvent.ToolRequest.self, from: JSONSerialization.data(withJSONObject: value))
+    }
+
+    func testAddressFieldNavigatesNewUserTabOnReturn() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let originalURL = base.appendingPathComponent("article")
+        let original = workspace.newTab(url: originalURL)
+        let window = BrowserWindow(contentRect: CGRect(x: 0, y: 0, width: 1024, height: 768),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace))
+        defer { window.close() }
+        func addressField(in view: NSView) -> NSTextField? {
+            if let field = view as? NSTextField, field.placeholderString == "输入网址" { return field }
+            return view.subviews.lazy.compactMap { addressField(in: $0) }.first
+        }
+        try await waitUntil("Original page and address field did not finish loading") {
+            addressField(in: window.contentView!) != nil && original.finishedRevision > 0
+        }
+        let tab = workspace.newTab()
+        try await waitUntil("New tab did not attach with an empty address field") {
+            tab.webView.window === window && addressField(in: window.contentView!)?.stringValue.isEmpty == true
+        }
+        let field = try XCTUnwrap(addressField(in: window.contentView!))
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        let destination = base.appendingPathComponent("input-search")
+        editor.insertText(destination.absoluteString, replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        do {
+            try await waitUntil("Return did not navigate the new tab") {
+                tab.webView.url == destination && tab.finishedRevision > 0 && !tab.webView.isLoading
+            }
+        } catch {
+            XCTFail("\(error.localizedDescription); new tab: \(String(describing: tab.webView.url)); original: \(String(describing: original.webView.url)); field: \(field.stringValue)")
+            return
+        }
+        XCTAssertEqual(workspace.selectedID, tab.id)
+        XCTAssertEqual(original.webView.url, originalURL)
     }
 
     func testBackgroundAgentPageStaysAttachedWhileUserReads() async throws {

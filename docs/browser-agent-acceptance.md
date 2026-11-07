@@ -8,7 +8,7 @@
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
-| 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；`testReaderKeepsLivePageAndClearsOnNavigation`；正式版原文及引用打开记录 | 已实现；基础流程已验收 |
+| 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；阅读模式回归及正式版原文／引用打开记录；地址栏从已加载标签切换至空白标签后的回车回归，Atlas 实际输入新地址并确认原标签保持 | 基础流程已验收；地址栏标签路由修正通过本地及 Atlas 检查，分发验收另行记录 |
 | 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由；实际固定标签后切换热点保留原页面；v0.2.47 原生 Command 点击新增一个用户标签，普通点击复用当前热点标签 | 固定、热点切换与 Command 点击实际通过 |
 | 用户／AI 两组标签与弹窗身份 | `testPopupOwnershipFollowsCurrentController`，预览与实际网页输入分别处理 | 自动回归及正式版预览通过 |
 | 稳定持久网站存储、重启／升级后登录复用 | `WKWebsiteDataStore(forIdentifier:)`；`testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances`；知乎重启与应用内更新记录 | 知乎实际通过；其他站点按下表验收 |

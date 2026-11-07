@@ -573,11 +573,14 @@ private struct BrowserTabContent: View {
             Image(systemName: tab.webView.url?.scheme?.lowercased() == "https" ? "lock" : "globe")
                 .foregroundStyle(.secondary)
                 .help(tab.webView.url?.host.map { "当前站点：\($0)" } ?? "当前站点")
-            TextField("输入网址", text: $address, onCommit: {
-                workspace.noteUserInteraction(in: tab)
-                let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let url = URL(string: value.contains("://") ? value : "https://" + value) { workspace.load(url, in: tab) }
-            }).textFieldStyle(.roundedBorder)
+            TextField("输入网址", text: $address)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("网页地址")
+                .onSubmit {
+                    workspace.noteUserInteraction(in: tab)
+                    let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let url = URL(string: value.contains("://") ? value : "https://" + value) { workspace.load(url, in: tab) }
+                }
             Button {
                 workspace.noteUserInteraction(in: tab)
                 if tab.showingReader { tab.showingReader = false }
