@@ -2,7 +2,7 @@
 
 本清单覆盖浏览器与站点身份、Pi 模型与工具、自动任务、Runtime 更新及 macOS 分发。代码、模拟测试、真实站点及发布制品分别作为证据；记录为“待验收”的条目需要补齐对应环境中的实际结果。
 
-最近完成制品校验的正式版为 [v0.2.50](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.50)，随包 Runtime 0.1.6、Pi 1.5.0。[CI 42371063629](https://github.com/tzf1003/TrendingTab/actions/runs/42371063629) 已通过签名、公证及 Intel 原生验证；实际发布包在 Atlas 辅助桌面完成地址栏导航检查。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
+最近完成制品校验的正式版为 [v0.2.54](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.54)，随包 Runtime 0.1.6、Pi 1.5.0。[CI 42381876410](https://github.com/tzf1003/TrendingTab/actions/runs/42381876410) 已通过签名、公证、组件安装回退及 Intel 原生验证。本地核对实际镜像、签名、票据、双架构与运行时健康检查；Atlas 读回发布包进程启动，完整站点研究按下表分别记录。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
 
 ## 浏览器与站点身份
 
