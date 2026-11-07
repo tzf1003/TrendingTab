@@ -35,6 +35,8 @@ const server = createServer(async (request, response) => {
   const hasHistory = serialized.includes("第二问") && serialized.includes("第一问");
   const result = serialized.includes("追问证据") ?
     (serialized.includes("先前研究证据") && serialized.includes("[E1]") ? "证据已传递" : "证据缺失") :
+    serialized.includes("材料为以下 JSON 数组：") ?
+      (serialized.includes("用于自动摘要的公开正文") ? '{"summary":"基于正文的摘要","evidenceIDs":["fixture:1"]}' : "原文材料缺失") :
     serialized.includes("主题描述：") ? '{"matchedIDs":["fixture:1"]}' :
     serialized.includes("检查请求头") ? (request.headers["x-fixture"] === "!literal-$HOME" ? "请求头正确" : "请求头错误") :
     (serialized.includes("请只输出 JSON 对象") ? '{"ok":true}' : (hasHistory ? (conversation.map((message) => message.role).join(",") === "user,assistant,user" ? "连续对话" : "角色错误") : "测试回答"));

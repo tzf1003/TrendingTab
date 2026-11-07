@@ -159,6 +159,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var automaticCollectionEnabled: Bool
     public var launchAtLogin: Bool
     public var aiEnabled: Bool
+    public var automaticSummaryReadOriginal: Bool
     public var dailyRequestLimit: Int
     public var dailyTokenLimit: Int
     public var promptVersion: Int
@@ -183,16 +184,36 @@ public struct AppSettings: Codable, Equatable, Sendable {
         dailyRequestLimit: Int,
         dailyTokenLimit: Int,
         promptVersion: Int,
-        globalNotification: NotificationPolicy
+        globalNotification: NotificationPolicy,
+        automaticSummaryReadOriginal: Bool = false
     ) {
         self.refreshInterval = min(max(refreshInterval, 5 * 60), 1440 * 60)
         self.automaticCollectionEnabled = automaticCollectionEnabled
         self.launchAtLogin = launchAtLogin
         self.aiEnabled = aiEnabled
+        self.automaticSummaryReadOriginal = automaticSummaryReadOriginal
         self.dailyRequestLimit = dailyRequestLimit
         self.dailyTokenLimit = dailyTokenLimit
         self.promptVersion = promptVersion
         self.globalNotification = globalNotification
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case refreshInterval, automaticCollectionEnabled, launchAtLogin, aiEnabled, automaticSummaryReadOriginal
+        case dailyRequestLimit, dailyTokenLimit, promptVersion, globalNotification
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(refreshInterval: values.decode(TimeInterval.self, forKey: .refreshInterval),
+            automaticCollectionEnabled: values.decode(Bool.self, forKey: .automaticCollectionEnabled),
+            launchAtLogin: values.decode(Bool.self, forKey: .launchAtLogin),
+            aiEnabled: values.decode(Bool.self, forKey: .aiEnabled),
+            dailyRequestLimit: values.decode(Int.self, forKey: .dailyRequestLimit),
+            dailyTokenLimit: values.decode(Int.self, forKey: .dailyTokenLimit),
+            promptVersion: values.decode(Int.self, forKey: .promptVersion),
+            globalNotification: values.decode(NotificationPolicy.self, forKey: .globalNotification),
+            automaticSummaryReadOriginal: values.decodeIfPresent(Bool.self, forKey: .automaticSummaryReadOriginal) ?? false)
     }
 }
 

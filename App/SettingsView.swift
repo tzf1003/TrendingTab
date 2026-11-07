@@ -458,6 +458,12 @@ struct SettingsView: View {
                     ), in: 1_000...10_000_000, step: 10_000)
                     Text("手动对话的用量单独显示；自动任务达到任一上限后暂停。")
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle("自动摘要读取公开原文", isOn: Binding(
+                        get: { model.settings.automaticSummaryReadOriginal },
+                        set: { value in updateSettings { $0.automaticSummaryReadOriginal = value } }
+                    ))
+                    Text("重大事件摘要最多匿名读取 3 篇原文，每篇使用最多 6,000 字摘录并发送给摘要模型。读取失败时使用已有材料；正文只在本轮内存中保留。")
+                        .font(.caption).foregroundStyle(.secondary)
                     if model.unknownAutomaticRuns > 0 {
                         HStack {
                             Text("\(model.unknownAutomaticRuns) 次自动任务的结果未知，已保守计入用量。")

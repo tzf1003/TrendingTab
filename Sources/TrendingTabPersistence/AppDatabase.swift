@@ -238,19 +238,28 @@ public final class AppDatabase: @unchecked Sendable {
         try reserveAIRun(id: id, tokens: tokens, now: now, taskKey: nil) == .reserved
     }
 
+    /// A read-only preflight for material collection. Reservation rechecks this atomically.
+    public func canReserveAIRun(tokens: Int, now: Date) throws -> Bool {
+        try writer.read { database in try Self.hasAIBudget(database, tokens: tokens, now: now) }
+    }
+
+    private static func hasAIBudget(_ database: Database, tokens: Int, now: Date) throws -> Bool {
+        let dayStart = Calendar.current.startOfDay(for: now)
+        guard tokens > 0, let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) else { return false }
+        let count = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
+        let used = try Int.fetchOne(database, sql: "SELECT COALESCE(SUM(reserved_tokens), 0) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
+        let settings = (try String.fetchOne(database, sql: "SELECT payload FROM documents WHERE key = ?", arguments: ["settings"])).flatMap { try? TrendingJSON.value(AppSettings.self, from: Data($0.utf8)) } ?? .standard
+        return count < settings.dailyRequestLimit && used <= settings.dailyTokenLimit && tokens <= settings.dailyTokenLimit - used
+    }
+
     public func reserveAIRun(id: UUID, tokens: Int, now: Date, taskKey: String?) throws -> AIRunReservation {
         try writer.write { database in
-            let dayStart = Calendar.current.startOfDay(for: now)
-            guard tokens > 0, let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) else { return .budgetExhausted }
+            guard tokens > 0 else { return .budgetExhausted }
             if let taskKey {
                 let existing = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE task_key = ? AND state IN ('reserved', 'unknown-accounted')", arguments: [taskKey]) ?? 0
                 guard existing == 0 else { return .duplicateUnknown }
             }
-            let count = try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
-            let used = try Int.fetchOne(database, sql: "SELECT COALESCE(SUM(reserved_tokens), 0) FROM ai_runs WHERE created_at >= ? AND created_at < ?", arguments: [dayStart, dayEnd]) ?? 0
-            let settings = (try String.fetchOne(database, sql: "SELECT payload FROM documents WHERE key = ?", arguments: ["settings"])).flatMap { try? TrendingJSON.value(AppSettings.self, from: Data($0.utf8)) } ?? .standard
-            guard count < settings.dailyRequestLimit, used <= settings.dailyTokenLimit,
-                  tokens <= settings.dailyTokenLimit - used else { return .budgetExhausted }
+            guard try Self.hasAIBudget(database, tokens: tokens, now: now) else { return .budgetExhausted }
             let payload = "{\"state\":\"reserved\"}"
             try database.execute(sql: "INSERT INTO ai_runs (id, state, reserved_tokens, created_at, payload, task_key) VALUES (?, 'reserved', ?, ?, ?, ?)", arguments: [id.uuidString, tokens, now, payload, taskKey])
             return .reserved

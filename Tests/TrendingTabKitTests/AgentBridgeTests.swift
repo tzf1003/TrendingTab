@@ -480,6 +480,12 @@ final class AgentBridgeTests: XCTestCase {
         let topicResult = try await AgentAIProvider(connection: connection, credential: "fixture-token", bridge: bridge, lane: .background)
             .generate(system: batch.system, prompt: batch.prompt, json: true)
         XCTAssertEqual(try batch.parse(topicResult.text), [topicItem.id])
+        let summaryMaterial = try await AutomaticSummaryMaterial.prepare(reports: [topicItem], readOriginal: true) { url in
+            PublicArticle(url: url, title: "报道", text: "用于自动摘要的公开正文", truncated: false)
+        }
+        let summaryResult = try await AgentAIProvider(connection: connection, credential: "fixture-token", bridge: bridge, lane: .background)
+            .generate(system: AutomaticSummaryMaterial.system, prompt: summaryMaterial.prompt, json: true)
+        XCTAssertEqual(try EventSummaryParser.parse(summaryResult.text, allowedEvidence: summaryMaterial.allowedEvidence), "基于正文的摘要")
         var continued = ""
         for try await delta in provider.stream(system: "测试", messages: [
             AIMessage(role: .user, text: "第一问"), AIMessage(role: .assistant, text: "测试回答"),
