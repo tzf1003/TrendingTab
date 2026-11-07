@@ -1506,6 +1506,52 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertTrue(unavailable.contains("没有可用"), unavailable)
     }
 
+    func testSearchResultAcceptsItsEvidenceAndCanonicalUUIDWithinRun() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("login"))
+        try await waitUntil { user.finishedRevision > 0 }
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("search-result").absoluteString]),
+            runID: "search", itemID: "item", taskTitle: "测试")
+        let searchTab = try XCTUnwrap(workspace.tabs.last { $0.owner == .agent })
+        let results = try await broker.extractSearchResults(searchTab, engine: "bing", runID: "search", itemID: "item")
+        let marker = try XCTUnwrap(results.range(of: "结果标识："))
+        let reference = try XCTUnwrap(results[marker.upperBound...].split(separator: "\n").first).description
+        let evidenceID = try XCTUnwrap(broker.evidence.records.last?.id)
+        for value in [" \(reference.lowercased())\n", "[\(evidenceID)]"] {
+            let opened = try await broker.execute(request(.openSearchResult, ["resultID": value]), runID: "search", itemID: "item", taskTitle: "测试")
+            XCTAssertTrue(opened.contains("页面已打开"), opened)
+            XCTAssertEqual(workspace.tabs.last?.webView.url?.path, "/article")
+        }
+        XCTAssertEqual(workspace.selectedID, user.id)
+        let count = workspace.tabs.count
+        let foreign = try await broker.execute(request(.openSearchResult, ["resultID": evidenceID]), runID: "foreign", itemID: "other", taskTitle: "测试")
+        XCTAssertTrue(foreign.contains("不属于当前任务"), foreign)
+        XCTAssertFalse(foreign.contains(reference))
+        XCTAssertEqual(workspace.tabs.count, count)
+        broker.finishRun("search")
+        let ended = try await broker.execute(request(.openSearchResult, ["resultID": reference]), runID: "search", itemID: "item", taskTitle: "测试")
+        XCTAssertEqual(ended, "任务已结束。")
+    }
+
+    func testUnknownSearchResultOffersOnlyCurrentRunReferences() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        for run in ["first", "second"] {
+            _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("search-result").absoluteString]),
+                runID: run, itemID: run, taskTitle: "测试")
+            let tab = try XCTUnwrap(workspace.tabs.last { $0.owner == .agent })
+            _ = try await broker.extractSearchResults(tab, engine: "bing", runID: run, itemID: run)
+        }
+        let recovery = try await broker.execute(request(.openSearchResult, ["resultID": "1"]), runID: "first", itemID: "first", taskTitle: "测试")
+        XCTAssertTrue(recovery.contains("resultID=E1"), recovery)
+        XCTAssertFalse(recovery.contains("resultID=E2"), recovery)
+    }
+
     func testResearchLinkReferencesAreScopedAndInvalidated() async throws {
         let (server, base) = try fixture()
         defer { server.terminate() }
