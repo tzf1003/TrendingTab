@@ -1,5 +1,11 @@
 # 验证记录
 
+独立 [Runtime 0.1.2](https://github.com/tzf1003/TrendingTab/releases/tag/runtime-v0.1.2) 的 [CI 42344418874](https://github.com/tzf1003/TrendingTab/actions/runs/42344418874) 通过组件构建、签名公证、安装回退及 Apple Silicon、Intel 原生检查。实际镜像 SHA-256 为 `ae4d5998586210315a63a9cb169c290cf7fc62591636009ef2f41c5589e64bd3`，与发布资产 digest 一致；本机镜像完整性、公证票据、指定 Developer ID 身份、双架构及两种架构的健康检查通过。使用实际 Node 路径执行生产安装器的安装、回退、重新安装及恢复回归通过。最初两次复测引用了不存在的测试 Node 路径，返回目录错误；有效路径下未再复现，未据此修改安装器。应用内发现组件更新的验收当时受 GitHub 匿名 API 限流影响。
+
+2026-11-07 正式版 [v0.2.41](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.41) 对应提交 `68c16eb75c7b`，[CI 42342277573](https://github.com/tzf1003/TrendingTab/actions/runs/42342277573) 通过完整测试、应用及 Runtime 签名公证、组件安装回退和 Intel 原生验证。下载制品的 SHA-256 与发布资产 digest 一致，DMG 完整性和票据校验通过；主应用、Widget 和 Runtime 为 arm64、x86_64，随包运行时在原生与 Rosetta 下通过健康检查。应用镜像 SHA-256 为 `7264686204169737525f07367fb5235e05c1e9415f79aa31be5a137833f890ef`。票据装订于 DMG，镜像中的应用没有单独装订票据；本机 `spctl` 识别为 Notarized Developer ID，同时显示 `override=security disabled`，不能单独作为启用 Gatekeeper 时的行为证明。
+
+通过应用内“一键更新”从 0.2.38 安装到 `/Applications/TrendingTab.app` 的 0.2.41，重新校验主应用与 Widget 的签名和运行身份。重启后知乎已登录会话、深度研究偏好均保留，自动采集和自动分析保持开启。在实际安装的正式版中打开 AI 原文标签，切到前台预览后继续提问，`find_ai_page` 成功读取已有页面并返回 `[E1]` 引用；两轮累计 4 次模型请求、9,229 tokens。
+
 2026-11-07 使用包含 AI 预览与追问修复的本地 Developer ID 验证版，完成微博热点的三轮真实研究：AI 在自己的标签读取公开微博搜索聚合页，搜索一次后尝试打开相关新闻；该结果经 Bing 跳转到 HTTP，被 App Transport Security 拦截。随后提供同一新闻的 HTTPS 直达链接，AI 读取南都新闻正文并与微博页面比较，区分正文与搜索摘要，返回对应引用。点击南都新闻引用后，中栏打开正确的 HTTPS 原文。三轮累计 10 次模型请求、44,753 tokens。此次微博读取为公开页面，不代表已登录微博或新闻站的身份验收；HTTPS 直达地址由验收者提供，尚未证明 Agent 可自主处理该 HTTP 跳转失败。
 
 同一验证版对抖音当前热点进行一次真实读取，3 次模型请求、6,602 tokens：打开 `douyin.com/hot/2734041` 后仅取得导航栏文字，未取得热点正文或视频内容；此次页面没有显示登录或验证要求。AI 回答说明了材料范围并附页面文字引用。该结果仅覆盖当次页面及会话，不证明抖音视频分析或登录身份读取能力。

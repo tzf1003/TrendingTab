@@ -44,6 +44,7 @@ done
 cp "$root/AgentRuntime/package.json" "$root/AgentRuntime/package-lock.json" "$root/AgentRuntime/runtime.mjs" \
   "$root/AgentRuntime/mcp-client.mjs" "$root/AgentRuntime/runtime-selftest.mjs" "$root/AgentRuntime/tool-catalog.mjs" \
   "$root/AgentRuntime/runtime-resource-loader.mjs" "$root/AgentRuntime/runtime-health.mjs" "$staging/"
+cp -R "$root/AgentRuntime/LICENSES" "$staging/LICENSES"
 (cd "$staging" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
 # Native modules for other operating systems cannot run on macOS and are not shipped.
 rm -rf "$staging/node_modules/@earendil-works/pi-tui/native/linux" \

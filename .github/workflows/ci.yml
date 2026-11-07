@@ -189,6 +189,7 @@ jobs:
           test -d "$app"
           test -d "$widget"
           codesign --verify --deep --strict --verbose=2 "$app"
+          cmp AgentRuntime/LICENSES/pi-MIT.txt "$app/Contents/Resources/AgentRuntime/LICENSES/pi-MIT.txt"
           node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
             "$app/Contents/Resources/AgentRuntime/package.json"
 
@@ -231,6 +232,7 @@ jobs:
           trap 'hdiutil detach "$mount" -quiet || true' EXIT
           app="$mount/AgentRuntime.app"
           codesign --verify --deep --strict "$app"
+          cmp AgentRuntime/LICENSES/pi-MIT.txt "$app/Contents/Resources/LICENSES/pi-MIT.txt"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$RUNTIME_VERSION"
           node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
             "$app/Contents/Resources/package.json"

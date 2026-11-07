@@ -141,6 +141,7 @@ jobs:
           trap 'hdiutil detach "$mountpoint" -quiet' EXIT
           app="$mountpoint/AgentRuntime.app"
           codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
+          cmp "$GITHUB_WORKSPACE/AgentRuntime/LICENSES/pi-MIT.txt" "$app/Contents/Resources/LICENSES/pi-MIT.txt"
           spctl --assess --type execute "$app"
           lipo "$app/Contents/MacOS/node" -verify_arch "$EXPECTED_ARCH"
           "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c 'import json,plistlib,sys; r=json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
