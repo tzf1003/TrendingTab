@@ -73,6 +73,32 @@ final class BrowserWorkspaceTests: XCTestCase {
         try await waitUntil { agent.webView.window == nil }
     }
 
+    func testBackgroundPageCannotTakeKeyboardFocusAndIsExcludedFromAccessibility() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let user = workspace.newTab(url: base.appendingPathComponent("article"))
+        let window = BrowserWindow(contentRect: CGRect(x: 0, y: 0, width: 1024, height: 768),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace))
+        defer { window.close() }
+        try await waitUntil { user.webView.window === window }
+        let agent = workspace.newTab(owner: .agent, taskID: "run", url: base.appendingPathComponent("input-search"), select: false)
+        try await waitUntil { agent.webView.window === window && agent.finishedRevision > 0 && !agent.webView.isLoading }
+        XCTAssertTrue(window.makeFirstResponder(user.webView))
+        let previous = window.firstResponder
+        XCTAssertFalse(window.makeFirstResponder(agent.webView))
+        XCTAssertTrue(window.firstResponder === previous)
+        let host = try XCTUnwrap(agent.webView.superview)
+        XCTAssertEqual((host.accessibilityChildren() as? [NSView])?.map(ObjectIdentifier.init), [ObjectIdentifier(user.webView)])
+        workspace.selectTab(agent)
+        try await waitUntil { host.accessibilityChildren()?.first as? NSView === agent.webView }
+        XCTAssertTrue(window.makeFirstResponder(agent.webView))
+        XCTAssertFalse(window.makeFirstResponder(user.webView))
+        XCTAssertFalse(agent.userTookControl)
+    }
+
     func testAgentListsOnlyConversationPagesIncludingFollowUpsAndPopups() async throws {
         let (server, base) = try fixture()
         defer { server.terminate() }

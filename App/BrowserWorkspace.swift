@@ -10,6 +10,24 @@ private final class LocalEventMonitor: @unchecked Sendable {
     deinit { NSEvent.removeMonitor(token) }
 }
 
+@MainActor
+final class BrowserWindow: NSWindow {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        var candidate = responder as? NSView
+        while let view = candidate {
+            if let page = view as? WorkspaceWebView, !page.permitsKeyboardFocus { return false }
+            candidate = view.superview
+        }
+        return super.makeFirstResponder(responder)
+    }
+}
+
+@MainActor
+private final class WorkspaceWebView: WKWebView {
+    var permitsKeyboardFocus = false
+    override var acceptsFirstResponder: Bool { permitsKeyboardFocus && super.acceptsFirstResponder }
+}
+
 enum ResearchNavigationPolicy {
     static func allows(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil,
@@ -95,7 +113,15 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
 
     @Published private(set) var tabs: [Tab] = []
     @Published var selectedID: UUID? {
-        didSet { if oldValue != selectedID { selectionRevision += 1; authorityChanges.send() } }
+        didSet {
+            for tab in tabs { (tab.webView as? WorkspaceWebView)?.permitsKeyboardFocus = tab.id == selectedID }
+            if oldValue != selectedID, let previous = tabs.first(where: { $0.id == oldValue }),
+               let window = previous.webView.window, let responder = window.firstResponder as? NSView,
+               responder === previous.webView || responder.isDescendant(of: previous.webView) {
+                window.makeFirstResponder(selected?.webView)
+            }
+            if oldValue != selectedID { selectionRevision += 1; authorityChanges.send() }
+        }
     }
     let authorityChanges = PassthroughSubject<Void, Never>()
     private(set) var selectionRevision = 0
@@ -164,7 +190,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     private func addTab(owner: Owner, taskID: String?, configuration: WKWebViewConfiguration, url: URL?, select: Bool) -> Tab {
         // Research tabs need a desktop viewport even before the user previews them.
         let initialFrame = owner == .agent ? CGRect(x: 0, y: 0, width: 1024, height: 768) : .zero
-        let webView = WKWebView(frame: initialFrame, configuration: configuration)
+        let webView = WorkspaceWebView(frame: initialFrame, configuration: configuration)
         let tab = Tab(owner: owner, agentTaskID: taskID, webView: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -206,6 +232,9 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     func close(_ tab: Tab) {
+        (tab.webView as? WorkspaceWebView)?.permitsKeyboardFocus = false
+        if let window = tab.webView.window, let responder = window.firstResponder as? NSView,
+           responder === tab.webView || responder.isDescendant(of: tab.webView) { window.makeFirstResponder(nil) }
         tab.approvedNavigation = nil
         researchLoads.remove(tab.id)
         tab.researchNavigationPending = false
@@ -597,13 +626,20 @@ private struct BrowserTabButton: View {
 
 /// Keep background pages in the window's view tree. Detaching an AI page until
 /// preview can suspend the rendering work used by dynamic article sites.
+@MainActor
+private final class BrowserDeckView: NSView {
+    weak var selectedPage: WKWebView?
+    override func accessibilityChildren() -> [Any]? { selectedPage.map { [$0] } ?? [] }
+}
+
 private struct BrowserPageDeck: NSViewRepresentable {
     let tabs: [BrowserWorkspace.Tab]
     let selectedID: UUID?
 
-    func makeNSView(context: Context) -> NSView { NSView() }
+    func makeNSView(context: Context) -> BrowserDeckView { BrowserDeckView() }
 
-    func updateNSView(_ view: NSView, context: Context) {
+    func updateNSView(_ view: BrowserDeckView, context: Context) {
+        view.selectedPage = tabs.first(where: { $0.id == selectedID })?.webView
         let liveViews = Set(tabs.map { ObjectIdentifier($0.webView) })
         for child in view.subviews where !liveViews.contains(ObjectIdentifier(child)) { child.removeFromSuperview() }
         for tab in tabs {

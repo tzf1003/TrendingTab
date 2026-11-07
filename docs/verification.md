@@ -1,5 +1,13 @@
 # 验证记录
 
+2026-11-07 正式版 [v0.2.47](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.47) 对应 `e982481ac8cb`，[CI 42363418578](https://github.com/tzf1003/TrendingTab/actions/runs/42363418578) 的构建、Intel 验证及发布成功。应用 DMG SHA-256 为 `1d6a1ad2f61c5a07a1cce6ee655d353eb684f30313ab94b49c0c77ce0c1f2927`，Runtime 0.1.6 为 `7a50f4ca25ec7d0a269d3c8958eaf88c5d2b2cedc64034939a7aa0da716234b1`；两者与 Release 资产和校验文件一致。本机镜像、签名、公证票据、应用／Widget 身份、双架构及原生／Rosetta Runtime 健康检查通过。Gatekeeper 的本机全局覆盖仍存在，启用检查时行为以 CI 为证。
+
+通过应用内一键更新安装后，设置读回应用 0.2.47、Runtime 0.1.6、Pi 1.5.0、已就绪。真实模型在自己的 Bing 标签执行 `open_ai_page → list_ai_pages → observe_ai_page → fill_ai_field`，确认卡展示公开测试文字，确认后搜索框实际值为 `TrendingTab`；用户原知乎标签保持选中及显示。前台预览 AI 标签仍显示“AI 可操作”，连续追问成功列出及滚动同一页面至约 84%；此时正文提取返回没有可读文字。两轮累计 9 次模型请求、32,822 tokens，未提交搜索。
+
+该次验收另发现：后台挂载页面仍出现在辅助功能树，焦点报告可指向后台输入框。新增测试复现后台页面可被设为 first responder、AX 子项包含后台页；修正窗口与 WebView 的焦点准入，并由页面宿主仅公开选中页的辅助功能子项，定向 2 项回归通过。完整回归及修订版分发另行记录。
+
+焦点修复后的本地完整浏览器回归为 72 项、2 项真实网络跳过、零意外失败，已有后台 POST 边界仍为预期失败；主应用 Debug 构建通过。测试结果位于 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_18-53-49-+0800.xcresult`。
+
 2026-11-07 AI 页面操作修复：此前视图仅挂载选中页，后台页虽保留 `WKWebView` 实例但未连接窗口；新增挂窗测试先超时失败，页面层改为同窗保留全部标签后通过。此测试证明页面挂载和切换保持，不代表所有站点都会允许后台渲染。Runtime 0.1.6 增加本对话标签查询和普通输入框工具，覆盖弹出页发现、追问、跨对话隔离、确认前不写入、敏感字段过滤、页面替换／接管／取消／结束后拒绝，以及用户标签和焦点保持。读取、观察和滚动对正在加载的 AI 页等待最多 5 秒，等待可取消且持续校验权限。
 
 本地 Swift 108 项、4 项环境跳过，浏览器 71 项、2 项真实网络跳过，均零意外失败；既有网站后台 POST 边界仍按预期失败记录。浏览器结果为 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_18-11-45-+0800.xcresult`。实际 Pi 子进程模拟测试通过新工具调用及输入确认期间暂停执行计时；主应用 Debug 构建通过。本段为本地验证，签名公证和真实页面操作需要对本版制品另行记录。

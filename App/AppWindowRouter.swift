@@ -49,7 +49,7 @@ final class AppWindowRouter: NSObject, NSWindowDelegate {
 
         if eventWindowController == nil {
             let content = NSHostingController(rootView: EventCenterView(model: model))
-            let window = NSWindow(contentViewController: content)
+            let window = BrowserWindow(contentViewController: content)
             window.title = "TrendingTab"
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
