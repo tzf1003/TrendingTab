@@ -3,6 +3,26 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/nested-scroll-article") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>内层滚动报道</title>
+      <style>body{margin:0;overflow:hidden}#reader{height:420px;overflow-y:auto}article{min-height:2400px}</style></head><body>
+      <header>固定工具栏</header><div id="reader"><article><p>内层正文</p><div style="height:2000px"></div></article></div>
+      <script>document.querySelector('#reader').addEventListener('scroll', event => {
+        if (event.target.scrollTop > 100 && !document.querySelector('#loaded')) {
+          const text = document.createElement('p'); text.id = 'loaded'; text.textContent = '内层滚动后加载的正文'; document.querySelector('article').append(text);
+        }
+      });</script></body></html>`);
+    return;
+  }
+  if (url.pathname === "/scroll-article") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>滚动报道</title>
+      <style>body{margin:0}main{min-height:2400px}#spacer{height:2000px}</style></head><body><main>
+      <a href="/article">相关报道</a><p>滚动前的正文</p><div id="spacer"></div></main>
+      <script>addEventListener('scroll', () => { if (scrollY > 100 && !document.querySelector('#loaded')) {
+        const text = document.createElement('p'); text.id = 'loaded'; text.textContent = '滚动后加载的正文'; document.querySelector('main').append(text);
+      }});</script></body></html>`);
+    return;
+  }
   if (url.pathname === "/slow") {
     await new Promise(resolve => setTimeout(resolve, 4000));
     if (!response.destroyed) response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end("<html><body>延迟页面</body></html>");
@@ -92,6 +112,23 @@ const server = createServer(async (request, response) => {
     const history = payload.messages.filter(message => message.role === "tool");
     let delta;
     let finish;
+    if (payload.messages.some(message => JSON.stringify(message.content).includes("研究滚动页面"))) {
+      const page = history.map(message => String(message.content)).join('\n').match(/[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}/i)?.[0];
+      const name = ["open_ai_page", "scroll_ai_page", "read_ai_page"][history.length];
+      const args = history.length === 0 ? {url: `http://127.0.0.1:${server.address().port}/scroll-article`} :
+        history.length === 1 ? {tabID: page, direction: "down"} : {tabID: page};
+      if (name) {
+        delta = {role: "assistant", tool_calls: [{index: 0, id: `scroll-${history.length}`, type: "function", function: {name, arguments: JSON.stringify(args)}}]};
+        finish = "tool_calls";
+      } else {
+        delta = {role: "assistant", content: String(history.at(-1)?.content).includes("滚动后加载的正文") ? "已阅读滚动后加载的正文 [E1]" : "研究失败。"};
+        finish = "stop";
+      }
+      response.writeHead(200, {"content-type": "text/event-stream"});
+      for (const [part, reason] of [[delta, null], [{}, finish]]) response.write(`data: ${JSON.stringify({id: "fixture", object: "chat.completion.chunk", created: 1, model: "mock", choices: [{index: 0, delta: part, finish_reason: reason}]})}\n\n`);
+      response.end("data: [DONE]\n\n");
+      return;
+    }
     if (payload.messages.some(message => JSON.stringify(message.content).includes("研究用户标签"))) {
       const result = history.length ? String(history.at(-1).content) : "";
       let name, args;

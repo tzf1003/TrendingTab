@@ -26,6 +26,10 @@ export const toolCatalog = {
     label: "观察研究页面", description: "查看 AI 标签或已获本轮操作授权的用户标签，获取当前网页链接、可展开区域和按钮的快照标识。",
     parameters: Type.Object({ tabID: Type.String({ maxLength: 128 }) }, { additionalProperties: false }),
   },
+  scroll_ai_page: {
+    label: "滚动研究页面", description: "在本对话的 AI 标签中向上或向下滚动约一屏，加载后续内容。保持用户页面和焦点不变；滚动后重新观察或读取页面。",
+    parameters: Type.Object({ tabID: Type.String({ maxLength: 128 }), direction: Type.Union([Type.Literal("up"), Type.Literal("down")]) }, { additionalProperties: false }),
+  },
   expand_ai_section: {
     label: "展开页面内容", description: "展开当前任务页面快照中的原生可展开区域；页面改变后需要重新观察。",
     parameters: Type.Object({ reference: Type.String({ maxLength: 128 }) }, { additionalProperties: false }),

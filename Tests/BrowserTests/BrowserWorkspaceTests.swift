@@ -226,6 +226,100 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertTrue(stale.contains("失效"), stale)
     }
 
+    func testAgentScrollingLoadsContentAndKeepsUserPageUnchanged() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("scroll-article"))
+        user.webView.frame = CGRect(x: 0, y: 0, width: 1024, height: 768)
+        try await waitUntil { user.finishedRevision > 0 }
+        _ = try await user.webView.evaluateJavaScript("window.scrollTo(0, 180)")
+        let userPosition = try await user.webView.evaluateJavaScript("window.scrollY") as? Double
+        XCTAssertGreaterThan(try XCTUnwrap(userPosition), 100)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("scroll-article").absoluteString]),
+                                     runID: "first", itemID: "conversation", taskTitle: "研究")
+        let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        let observation = try await broker.execute(request(.observeAIPage, ["tabID": tab.id.uuidString]),
+                                                   runID: "first", itemID: "conversation", taskTitle: "研究")
+        let marker = try XCTUnwrap(observation.range(of: "链接标识："))
+        let reference = try XCTUnwrap(observation[marker.upperBound...].split(separator: "\n").first).description
+        let scrolled = try await broker.execute(request(.scrollAIPage, ["tabID": tab.id.uuidString, "direction": "down"]),
+                                                runID: "first", itemID: "conversation", taskTitle: "研究")
+        XCTAssertTrue(scrolled.contains("已滚动"), scrolled)
+        let agentPosition = try await tab.webView.evaluateJavaScript("window.scrollY") as? Double
+        XCTAssertGreaterThan(try XCTUnwrap(agentPosition), 100)
+        let reading = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                               runID: "first", itemID: "conversation", taskTitle: "研究")
+        XCTAssertTrue(reading.contains("滚动后加载的正文"), reading)
+        let stale = try await broker.execute(request(.openAIPageLink, ["reference": reference]),
+                                             runID: "first", itemID: "conversation", taskTitle: "研究")
+        XCTAssertTrue(stale.contains("失效"), stale)
+        XCTAssertEqual(workspace.selectedID, user.id)
+        let userPositionAfter = try await user.webView.evaluateJavaScript("window.scrollY") as? Double
+        XCTAssertEqual(userPositionAfter, userPosition)
+        XCTAssertEqual(user.webView.url, base.appendingPathComponent("scroll-article"))
+
+        // A follow-up can scroll the conversation's existing page in either direction.
+        broker.finishRun("first")
+        workspace.selectTab(tab)
+        let up = try await broker.execute(request(.scrollAIPage, ["tabID": tab.id.uuidString, "direction": "up"]),
+                                          runID: "follow-up", itemID: "conversation", taskTitle: "追问")
+        XCTAssertTrue(up.contains("已滚动"), up)
+        let agentPositionAfter = try await tab.webView.evaluateJavaScript("window.scrollY") as? Double
+        XCTAssertEqual(agentPositionAfter, 0)
+        XCTAssertFalse(tab.userTookControl)
+    }
+
+    func testAgentScrollsNestedArticleContainer() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("nested-scroll-article").absoluteString]),
+                                     runID: "run", itemID: "item", taskTitle: "研究")
+        let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        let result = try await broker.execute(request(.scrollAIPage, ["tabID": tab.id.uuidString, "direction": "down"]),
+                                              runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(result.contains("已滚动"), result)
+        let outerPosition = try await tab.webView.evaluateJavaScript("window.scrollY") as? Double
+        let innerPosition = try await tab.webView.evaluateJavaScript("document.querySelector('#reader').scrollTop") as? Double
+        XCTAssertEqual(outerPosition, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(innerPosition), 100)
+        let reading = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                               runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(reading.contains("内层滚动后加载的正文"), reading)
+    }
+
+    func testAgentScrollingRequiresOwnLivePageAndValidDirection() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("scroll-article"))
+        try await waitUntil { user.finishedRevision > 0 }
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("scroll-article").absoluteString]),
+                                     runID: "run", itemID: "item", taskTitle: "研究")
+        let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        for (target, run, item, direction) in [(user.id, "run", "item", "down"),
+                                               (tab.id, "foreign", "another", "down"),
+                                               (tab.id, "run", "item", "sideways")] {
+            let result = try await broker.execute(request(.scrollAIPage, ["tabID": target.uuidString, "direction": direction]),
+                                                 runID: run, itemID: item, taskTitle: "研究")
+            XCTAssertFalse(result.contains("已滚动"), result)
+        }
+        let position = try await tab.webView.evaluateJavaScript("window.scrollY") as? Double
+        XCTAssertEqual(position, 0)
+        workspace.takeControl(tab)
+        let takenOver = try await broker.execute(request(.scrollAIPage, ["tabID": tab.id.uuidString, "direction": "down"]),
+                                                runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(takenOver.contains("权限已失效"), takenOver)
+        broker.finishRun("run")
+        let finished = try await broker.execute(request(.scrollAIPage, ["tabID": tab.id.uuidString, "direction": "down"]),
+                                                runID: "run", itemID: "item", taskTitle: "研究")
+        XCTAssertTrue(finished.contains("已结束"), finished)
+    }
+
     func testFollowUpReusesConversationPagesWithFreshReferences() async throws {
         let (server, base) = try fixture()
         defer { server.terminate() }
@@ -1155,6 +1249,42 @@ final class BrowserWorkspaceTests: XCTestCase {
             attachment.lifetime = .keepAlways
             activity.add(attachment)
         }
+    }
+
+    func testPiResearchScrollsAndReadsLazyContentThroughNativeBroker() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let node = environment["TRENDINGTAB_TEST_NODE"], let runtime = environment["TRENDINGTAB_TEST_RUNTIME"] else {
+            if environment["TRENDINGTAB_REQUIRE_PI_INTEGRATION"] == "1" {
+                throw NSError(domain: "TrendingTabBrowserTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Pi integration paths are required."])
+            }
+            throw XCTSkip("Set the Pi runtime paths to exercise browser integration.")
+        }
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        let user = workspace.newTab(url: base.appendingPathComponent("login"))
+        try await waitUntil { user.finishedRevision > 0 }
+        let bridge = AgentBridge(executableURL: URL(fileURLWithPath: node), scriptURL: URL(fileURLWithPath: runtime))
+        let connection = AIConnection(name: "Fixture", kind: .openAIChat, baseURL: base.appendingPathComponent("v1"),
+                                      model: "mock", credentialAccount: "fixture")
+        let stream = try await bridge.run(sessionID: "browser-scroll", connection: connection, credential: "fixture",
+                                          prompt: "研究滚动页面", system: "引用来源", tools: [.openAIPage, .scrollAIPage, .readAIPage], ephemeral: true)
+        var text = ""
+        var called: [String] = []
+        for try await event in stream {
+            if let request = event.toolRequest {
+                called.append(request.name)
+                let result = try await broker.execute(request, runID: event.runID, itemID: "item", taskTitle: "滚动研究")
+                XCTAssertEqual(workspace.selectedID, user.id)
+                try await bridge.respondToTool(runID: event.runID, requestID: request.requestID, text: result)
+            }
+            if event.type == "text_delta" { text += event.text ?? "" }
+        }
+        XCTAssertEqual(called, [AgentToolName.openAIPage.rawValue, AgentToolName.scrollAIPage.rawValue, AgentToolName.readAIPage.rawValue])
+        XCTAssertEqual(text, "已阅读滚动后加载的正文 [E1]")
+        XCTAssertEqual(broker.evidence.citations(in: text, itemID: "item").valid.first?.url.path, "/scroll-article")
+        XCTAssertEqual(user.webView.url?.path, "/login")
     }
 
     func testPiResearchReadsVisibleLoggedInPageThroughNativeBroker() async throws {

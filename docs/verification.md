@@ -1,5 +1,9 @@
 # 验证记录
 
+2026-11-07 新增 AI 页面上下滚动工具，Runtime 为 0.1.4。使用实际 Pi 子进程、本地模拟模型及 WebKit 验证 `open_ai_page → scroll_ai_page → read_ai_page`，取得滚动后加载的正文并登记引用；另验证整页、内层正文区域、向上滚动、连续追问复用、旧元素标识失效，以及用户页面 URL、滚动位置和选中标签保持。其他对话、用户标签、接管后及结束后的请求不能滚动该页面。工具进度分别显示观察、查找、读取、滚动和展开。
+
+本地完整浏览器回归共 63 项，2 项真实网络测试按配置跳过，没有意外失败；既有网页脚本后台 POST 边界继续记录为预期失败。结果为 `DerivedData-browser/Logs/Test/Test-TrendingTabBrowserTests-2026.11.07_15-10-01-+0800.xcresult`，完整日志为 `browser-scroll-full.log`。Swift 回归共 90 项、4 项环境跳过、零失败，主应用 Debug 构建及 Pi 协议、元数据、MCP 回归通过。此项记录为本地模拟模型和测试站点验证，真实站点及发布制品单独验收。
+
 2026-11-07 正式版 [v0.2.42](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.42) 对应提交 `b91f76993e83`，[CI 42346445673](https://github.com/tzf1003/TrendingTab/actions/runs/42346445673) 的构建、Intel 验证和发布作业均成功。实际应用及独立 Runtime 镜像的 SHA-256 分别为 `c2fb7655a4cfd7e24319d0ac3955fd99db7dfe44385a174416d3773306558233` 和 `809c9cf050b294e58c7f453565b4c1aff3c0c99da38a72828455338fcb073f6a`，与附带校验文件及 GitHub 发布资产 digest 一致。本机镜像完整性、公证票据、应用与 Widget 运行身份、独立 Runtime 指定 Developer ID 签名均通过；应用、Widget 和 Runtime 包含 arm64、x86_64，运行时在原生与 Rosetta 下通过健康检查。两份分发包内的 Pi MIT 许可全文均与仓库文件相同，随包 Runtime 为 0.1.3、Pi 为 1.5.0。本机 `spctl` 识别为 Notarized Developer ID，同时显示 `override=security disabled`；启用 Gatekeeper 时的检查由 CI 另行执行。
 
 随后通过应用内“软件更新 → 一键更新”从 0.2.41 升级到 0.2.42，重新验证 `/Applications/TrendingTab.app` 及 Widget 的签名与运行身份；知乎已登录会话和深度研究偏好保留。再从“Agent 运行时”检查并安装 0.1.3，界面显示完成，磁盘选择为 `active: 0.1.3`、`previous: 0.1.2`；自动采集和自动分析均在界面读回开启。该 CI 的 Swift 测试为 90 项、4 项环境跳过，浏览器测试为 59 项、2 项真实网络跳过，均无意外失败；网站脚本后台 POST 的既有边界继续记录为预期失败。

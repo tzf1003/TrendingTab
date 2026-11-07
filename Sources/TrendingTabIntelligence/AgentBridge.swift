@@ -8,6 +8,7 @@ public enum AgentToolName: String, Encodable, CaseIterable, Sendable {
     case readAIPage = "read_ai_page"
     case findAIPage = "find_ai_page"
     case observeAIPage = "observe_ai_page"
+    case scrollAIPage = "scroll_ai_page"
     case expandAISection = "expand_ai_section"
     case openAIPageLink = "open_ai_page_link"
     case submitAIForm = "submit_ai_form"

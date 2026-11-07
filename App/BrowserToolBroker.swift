@@ -422,6 +422,54 @@ final class BrowserToolBroker: ObservableObject {
                   !query.isEmpty, query.count <= 100 else { return "页面或查找关键词无效。" }
             return try await readText(tab, runID: runID, itemID: itemID, authorizedUserTab: false, find: query)
 
+        case AgentToolName.scrollAIPage.rawValue:
+            guard let raw = request.arguments["tabID"], let id = UUID(uuidString: raw),
+                  let tab = workspace.tabs.first(where: { $0.id == id && ownsAgentTab($0, runID: runID) }),
+                  let direction = request.arguments["direction"], ["up", "down"].contains(direction) else {
+                return "页面不存在、不属于本对话或滚动方向无效。"
+            }
+            guard !tab.userTookControl, !tab.webView.isLoading, let pageURL = tab.webView.url else {
+                return "页面正在加载或操作权限已失效。"
+            }
+            guard !tab.needsUserAction else { return PageError.needsUserAction(tab.id).localizedDescription }
+            guard busyTabs.insert(id).inserted else { return "页面正忙，请稍后重试。" }
+            defer { busyTabs.remove(id) }
+            let revision = tab.navigationRevision
+            // Scrolling can load or replace content. Retire all old element references
+            // before the page dispatches scroll handlers, including other runs' snapshots.
+            linkReferences = linkReferences.filter { $0.value.tabID != id }
+            disclosureReferences = disclosureReferences.filter { $0.value.tabID != id }
+            formReferences = formReferences.filter { $0.value.tabID != id }
+            buttonReferences = buttonReferences.filter { $0.value.tabID != id }
+            pageFingerprints = pageFingerprints.filter { !$0.key.contains(":" + id.uuidString + ":") }
+            let result = try await tab.webView.callAsyncJavaScript("""
+                let root = document.scrollingElement;
+                const main = document.querySelector('article') || document.querySelector('main, [role=main]');
+                for (let element = main; element && element !== document.scrollingElement; element = element.parentElement) {
+                    const style = getComputedStyle(element);
+                    if (element.clientHeight > 0 && element.scrollHeight > element.clientHeight + 1 &&
+                        /auto|scroll/.test(style.overflowY) && element.getClientRects().length && style.visibility !== 'hidden') {
+                        root = element;
+                        break;
+                    }
+                }
+                if (!root || root.clientHeight <= 0) return null;
+                const before = root.scrollTop;
+                root.scrollBy({top: sign * Math.max(1, Math.floor(root.clientHeight * 0.85)), behavior: 'instant'});
+                await new Promise(resolve => setTimeout(resolve, 100));
+                return {position: root.scrollTop, maximum: Math.max(0, root.scrollHeight - root.clientHeight), moved: Math.abs(root.scrollTop - before) > 0.5};
+                """, arguments: ["sign": direction == "down" ? 1 : -1], in: nil, contentWorld: .defaultClient)
+            try Task.checkCancellation()
+            guard validResearchTab(tab, runID: runID, revision: revision, pageURL: pageURL) else {
+                return "页面已变化或权限已失效，请重新观察。"
+            }
+            guard let state = result as? [String: Any], let position = state["position"] as? Double,
+                  let maximum = state["maximum"] as? Double, position.isFinite, maximum.isFinite,
+                  let moved = state["moved"] as? Bool else { return "此页面没有可滚动的正文区域。" }
+            let progress = maximum > 0 ? Int(min(100, max(0, position / maximum * 100))) : 100
+            let status = moved ? "已滚动" : (direction == "down" ? "已到达当前页面底部" : "已到达当前页面顶部")
+            return "\(status)，当前阅读位置约 \(progress)%。请重新观察或读取页面；动态加载的内容可能需要稍后再读取。"
+
         case AgentToolName.readPublicArticle.rawValue:
             let offset = Int(request.arguments["offset"] ?? "0")
             guard let offset, offset >= 0, offset <= 200_000 else { return "段落位置无效。" }
