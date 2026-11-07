@@ -41,6 +41,13 @@ final class AgentRuntimeManifestTests: XCTestCase {
         XCTAssertThrowsError(try AgentRuntimeManifest.bundledVersion(package: Data(#"{"name":"trendingtab-agent-runtime","version":"../bad"}"#.utf8)))
     }
 
+    func testNewsRuntimeRequiresCompatibleNativeSearchHost() throws {
+        let manifest = try AgentRuntimeManifest.parse(plist(["TrendingTabMinimumAppVersion": "0.2.44"]))
+        XCTAssertThrowsError(try manifest.validate(appVersion: "0.2.43", systemVersion: "15.0.0"))
+        XCTAssertNoThrow(try manifest.validate(appVersion: "0.2.44", systemVersion: "15.0.0"))
+        XCTAssertNoThrow(try manifest.validate(appVersion: "0.2.45", systemVersion: "15.0.0"))
+    }
+
     func testBundledPiVersionUsesPinnedPackageMetadata() throws {
         let package = Data(#"{"name":"trendingtab-agent-runtime","version":"0.2.0","dependencies":{"@earendil-works/pi-coding-agent":"2.3.4"}}"#.utf8)
         XCTAssertEqual(try AgentRuntimeManifest.bundledPiVersion(package: package), "2.3.4")
@@ -237,7 +244,7 @@ final class AgentRuntimeManifestTests: XCTestCase {
             XCTAssertThrowsError(try AgentRuntimeVerifier.verify(bundle: URL(fileURLWithPath: path), appVersion: "0.2.10", systemVersion: "15.0.0"))
         }
         if let path = ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_TRUSTED_RUNTIME"] {
-            let trusted = try AgentRuntimeVerifier.verify(bundle: URL(fileURLWithPath: path), appVersion: "0.2.10", systemVersion: "15.0.0")
+            let trusted = try AgentRuntimeVerifier.verify(bundle: URL(fileURLWithPath: path), appVersion: "0.2.44", systemVersion: "15.0.0")
             XCTAssertEqual(trusted.piVersion, "1.5.0")
         }
     }
@@ -330,7 +337,7 @@ final class AgentRuntimeManifestTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("runtime-install-test-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let health = URL(fileURLWithPath: runtime).deletingLastPathComponent().appendingPathComponent("runtime-health.mjs")
-        let installer = AgentRuntimeInstaller(root: root, appVersion: "0.2.10", systemVersion: "15.0.0",
+        let installer = AgentRuntimeInstaller(root: root, appVersion: "0.2.44", systemVersion: "15.0.0",
             bundledExecutable: URL(fileURLWithPath: node), bundledHealthScript: health, bundledPiVersion: "1.5.0")
         let installed = try await installer.install(dmg: image, release: release)
         XCTAssertEqual(installed.active, release.version)
