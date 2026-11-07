@@ -2,14 +2,14 @@
 
 本清单覆盖浏览器与站点身份、Pi 模型与工具、自动任务、Runtime 更新及 macOS 分发。代码、模拟测试、真实站点及发布制品分别作为证据；记录为“待验收”的条目需要补齐对应环境中的实际结果。
 
-最近已验收的正式版为 [v0.2.45](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.45)，随包 Runtime 0.1.5、Pi 1.5.0。[CI 42354687049](https://github.com/tzf1003/TrendingTab/actions/runs/42354687049) 已通过签名、公证及 Intel 原生验证。详细日期、制品哈希、真实模型调用和限制见 [验证记录](verification.md)。
+最近已验收的正式版为 [v0.2.46](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.46)，随包 Runtime 0.1.5、Pi 1.5.0。[CI 42359154763](https://github.com/tzf1003/TrendingTab/actions/runs/42359154763) 已通过签名、公证及 Intel 原生验证。详细日期、制品哈希、真实模型调用和限制见 [验证记录](verification.md)。
 
 ## 浏览器与站点身份
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
 | 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；`testReaderKeepsLivePageAndClearsOnNavigation`；正式版原文及引用打开记录 | 已实现；基础流程已验收 |
-| 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由 | 已实现；完整窗口交互需继续检查 |
+| 保留 WebView、当前热点标签、固定标签、Command 新开 | `BrowserWorkspace.openStory`、`BrowserTabButton`、事件中心新闻点击路由；实际固定标签后切换热点保留原页面 | 固定与热点切换实际通过；Command 点击需确认原生修饰键传递 |
 | 用户／AI 两组标签与弹窗身份 | `testPopupOwnershipFollowsCurrentController`，预览与实际网页输入分别处理 | 自动回归及正式版预览通过 |
 | 稳定持久网站存储、重启／升级后登录复用 | `WKWebsiteDataStore(forIdentifier:)`；`testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances`；知乎重启与应用内更新记录 | 知乎实际通过；其他站点按下表验收 |
 | 管理、清除站点数据及共享身份说明 | 浏览器设置、`clearWebsiteData`，Cookie 与站点存储清理回归 | 已实现并有测试 |
@@ -52,8 +52,8 @@
 
 | 场景 | 已有证据 | 剩余验收 |
 |---|---|---|
-| 知乎应用内登录、重启与升级、原文、搜索、多轮、引用 | 登录持久性、已登录读取、前序搜索研究；v0.2.45 上下滚动、预览后追问及正文引用 | 在同一轮中重新完成搜索、比较和连续追问；记录模型超时与搜索跳转 |
-| 微博 | 公开热搜页读取、搜索补充、新闻比较、引用打开、正式版预览后连续观察 | 应用内微博登录身份的完整研究 |
+| 知乎应用内登录、重启与升级、原文、搜索、多轮、引用 | 登录持久性、已登录读取；v0.2.46 原文、搜索、深圳新闻网比较、预览后追问、引用跳转 | 实际通过；独立报道首次未加载完成，追问后读取成功 |
+| 微博 | 公开热搜页读取、搜索补充、新闻比较、引用打开；v0.2.45 应用内显示登录账号，AI 读取聚合页、预览后滚动及追问引用 | 登录会话页面读取与连续操作通过；同轮搜索及独立报道比较继续验收 |
 | 一个新闻站 | 公开澎湃页面及南都新闻正文读取、比较和来源打开 | 应用内新闻站登录身份的完整研究 |
 | 抖音正文、视频、登录 | 一次实际热点仅提取导航文字，模型说明材料范围 | 在有效登录状态下重新记录正文／视频可读范围 |
 
