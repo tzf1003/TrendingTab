@@ -52,7 +52,41 @@ public enum AgentRuntimeVerifier {
         guard try architectures(at: executable) == Set(["arm64", "x86_64"]) else {
             throw AgentRuntimeVerificationError.invalidArchitecture
         }
+        try verifyNativeArchitectures(in: bundle)
         return manifest
+    }
+
+    /// Apply the distribution architecture requirement to downloaded and
+    /// previously selected components, including dynamically loaded helpers.
+    static func verifyNativeArchitectures(in root: URL) throws {
+        let magic: Set<Data> = [
+            Data([0xfe, 0xed, 0xfa, 0xce]), Data([0xce, 0xfa, 0xed, 0xfe]),
+            Data([0xfe, 0xed, 0xfa, 0xcf]), Data([0xcf, 0xfa, 0xed, 0xfe]),
+            Data([0xca, 0xfe, 0xba, 0xbe]), Data([0xbe, 0xba, 0xfe, 0xca]),
+            Data([0xca, 0xfe, 0xba, 0xbf]), Data([0xbf, 0xba, 0xfe, 0xca]),
+        ]
+        var directories = [root]
+        var nativeFiles = 0
+        while let directory = directories.popLast() {
+            let children = try FileManager.default.contentsOfDirectory(at: directory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+            for child in children {
+                let values = try child.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isSymbolicLink != true else { continue }
+                if values.isDirectory == true { directories.append(child); continue }
+                guard values.isRegularFile == true else { continue }
+                let handle = try FileHandle(forReadingFrom: child)
+                let header: Data
+                do { header = try handle.read(upToCount: 4) ?? Data(); try handle.close() }
+                catch { try? handle.close(); throw error }
+                guard magic.contains(header) else { continue }
+                guard try Set(["arm64", "x86_64"]).isSubset(of: architectures(at: child)) else {
+                    throw AgentRuntimeVerificationError.invalidArchitecture
+                }
+                nativeFiles += 1
+            }
+        }
+        guard nativeFiles > 0 else { throw AgentRuntimeVerificationError.invalidArchitecture }
     }
 
     private static func isRegularDirectory(_ url: URL) throws -> Bool {
