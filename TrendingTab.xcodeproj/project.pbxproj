@@ -13,6 +13,7 @@
 		259FE23DEDF5A511EC7C7A8E /* TrendingTabWidgetBridge in Frameworks */ = {isa = PBXBuildFile; productRef = 23B2A71C94490C98AC82C5EE /* TrendingTabWidgetBridge */; };
 		2A985F7FA5733C05F23BD716 /* EventCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8916284782CEED2FD92DB4BB /* EventCenterView.swift */; };
 		2B16382781AFCAB9EEC3E98D /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EA886431937937EAF8796EE /* WidgetIntents.swift */; };
+		3CEDF97581846C7A3BAD69C4 /* BrowserSiteInformation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B693D4FB5E408FE5A3C21D9 /* BrowserSiteInformation.swift */; };
 		4236D72465C5CE772D722296 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2FF922F4A5A464DF6ADA733 /* SettingsView.swift */; };
 		47E3E5CA9CEF3FB7EC189FF7 /* TrendingTabApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8390706647DE91D092AE66E0 /* TrendingTabApp.swift */; };
 		4DF759D96EA8FE27AD98197E /* TrendingTabWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -33,6 +34,7 @@
 		CD932F17DA6F2256227FCED7 /* SurfacePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */; };
 		D320460888DCF2F0600E0FBB /* TrendingTabCore in Frameworks */ = {isa = PBXBuildFile; productRef = 323E6CFF9CDD8000B58E58A1 /* TrendingTabCore */; };
 		E8371929D0AB3FB77158577C /* fixture-server.mjs in Resources */ = {isa = PBXBuildFile; fileRef = 01B21A1BED4F12E5FD2945D1 /* fixture-server.mjs */; };
+		ED779B1662D0C941316298E9 /* BrowserSiteInformation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B693D4FB5E408FE5A3C21D9 /* BrowserSiteInformation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +76,7 @@
 		8916284782CEED2FD92DB4BB /* EventCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventCenterView.swift; sourceTree = "<group>"; };
 		901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppWindowRouter.swift; sourceTree = "<group>"; };
 		9327F5B2D143E80985A5F901 /* TrendingTabBrowserTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrendingTabBrowserTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9B693D4FB5E408FE5A3C21D9 /* BrowserSiteInformation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSiteInformation.swift; sourceTree = "<group>"; };
 		9E30FD59D494B35EAC5FBD98 /* TrendingTab */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TrendingTab; path = .; sourceTree = SOURCE_ROOT; };
 		9EA886431937937EAF8796EE /* WidgetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetIntents.swift; sourceTree = "<group>"; };
 		B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfacePalette.swift; sourceTree = "<group>"; };
@@ -186,6 +189,7 @@
 			children = (
 				34EBB2AE5EB4B90006262732 /* AppTheme.swift */,
 				901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */,
+				9B693D4FB5E408FE5A3C21D9 /* BrowserSiteInformation.swift */,
 				1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */,
 				E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */,
 				8916284782CEED2FD92DB4BB /* EventCenterView.swift */,
@@ -336,6 +340,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9A6421D68827E7DFD9F3FD6E /* AppTheme.swift in Sources */,
+				3CEDF97581846C7A3BAD69C4 /* BrowserSiteInformation.swift in Sources */,
 				1A5F1BDCE0E1E3BE94215EE8 /* BrowserToolBroker.swift in Sources */,
 				109473E30100CA632FABF0EC /* BrowserWorkspace.swift in Sources */,
 				75E6BF23BE6FA76DE24CDF88 /* BrowserWorkspaceTests.swift in Sources */,
@@ -360,6 +365,7 @@
 			files = (
 				7A675A93F84B5F07A34C41F1 /* AppTheme.swift in Sources */,
 				82ADB27394191E336171F1E5 /* AppWindowRouter.swift in Sources */,
+				ED779B1662D0C941316298E9 /* BrowserSiteInformation.swift in Sources */,
 				9D3C821431C86053DD71B92F /* BrowserToolBroker.swift in Sources */,
 				ADB9D913FA057D3132E23777 /* BrowserWorkspace.swift in Sources */,
 				2A985F7FA5733C05F23BD716 /* EventCenterView.swift in Sources */,

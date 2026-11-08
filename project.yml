@@ -75,6 +75,7 @@ targets:
     platform: macOS
     sources:
       - App/BrowserWorkspace.swift
+      - App/BrowserSiteInformation.swift
       - App/BrowserToolBroker.swift
       - App/AppTheme.swift
       - Shared/SurfacePalette.swift

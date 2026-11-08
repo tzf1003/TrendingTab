@@ -84,6 +84,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         @Published var title = "新标签"
         @Published var address = ""
         @Published var loading = false
+        @Published var onlySecureContent = false
         @Published var error: String?
         @Published var pinned = false
         @Published var readerContent: ReaderContent?
@@ -203,6 +204,9 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak tab] view, _ in
                 Task { @MainActor in tab?.loading = view.isLoading }
+            },
+            webView.observe(\.hasOnlySecureContent, options: [.initial, .new]) { [weak tab] view, _ in
+                Task { @MainActor in tab?.onlySecureContent = view.hasOnlySecureContent }
             }
         ]
         tabs.append(tab)
@@ -381,6 +385,8 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         guard let tab = tabs.first(where: { $0.webView === webView }) else { return }
         researchLoads.remove(tab.id)
         tab.researchNavigationPending = false
+        tab.navigationErrorCode = WKError.webContentProcessTerminated.rawValue
+        tab.navigationErrorDomain = WKError.errorDomain
         tab.error = "页面进程已停止，请重新加载。"
     }
 
@@ -532,6 +538,14 @@ private struct BrowserTabContent: View {
     @ObservedObject var workspace: BrowserWorkspace
     @ObservedObject var tab: BrowserWorkspace.Tab
     @State private var address = ""
+    @State private var showingSiteInformation = false
+
+    private var siteInformation: BrowserSiteInformation {
+        BrowserSiteInformation(url: tab.webView.url, loading: tab.loading,
+                               finished: tab.navigationRevision > 0 && tab.finishedRevision == tab.navigationRevision,
+                               navigationFailed: tab.navigationErrorCode != nil,
+                               onlySecureContent: tab.onlySecureContent)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -570,9 +584,16 @@ private struct BrowserTabContent: View {
             } label: {
                 Image(systemName: tab.loading ? "xmark" : "arrow.clockwise")
             }.help("刷新")
-            Image(systemName: tab.webView.url?.scheme?.lowercased() == "https" ? "lock" : "globe")
+            Button { showingSiteInformation.toggle() } label: {
+                Image(systemName: siteInformation.connection.symbol)
+            }
                 .foregroundStyle(.secondary)
-                .help(tab.webView.url?.host.map { "当前站点：\($0)" } ?? "当前站点")
+                .help("站点信息")
+                .accessibilityLabel("站点信息")
+                .popover(isPresented: $showingSiteInformation) {
+                    BrowserSiteInformationView(information: siteInformation, owner: tab.owner,
+                                               userTookControl: tab.userTookControl, httpStatus: tab.httpStatus)
+                }
             TextField("输入网址", text: $address)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityLabel("网页地址")
@@ -603,7 +624,8 @@ private struct BrowserTabContent: View {
             }
         }
         .buttonStyle(.borderless).padding(8)
-        .onChange(of: tab.id) { _, _ in address = tab.address }
+        .onChange(of: tab.id) { _, _ in address = tab.address; showingSiteInformation = false }
+        .onChange(of: tab.webView.url?.host) { _, _ in showingSiteInformation = false }
         .onChange(of: tab.address, initial: true) { _, value in address = value }
     }
 }

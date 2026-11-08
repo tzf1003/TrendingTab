@@ -47,6 +47,40 @@ final class BrowserWorkspaceTests: XCTestCase {
         return try JSONDecoder().decode(AgentStreamEvent.ToolRequest.self, from: JSONSerialization.data(withJSONObject: value))
     }
 
+    func testSiteInformationUsesCompletedSecureLoadAndSeparatesFailureFromHTTPSAddress() {
+        let url = URL(string: "https://example.com/story?session=private#part")!
+        func info(loading: Bool = false, finished: Bool = true, failed: Bool = false,
+                  secure: Bool = true) -> BrowserSiteInformation {
+            BrowserSiteInformation(url: url, loading: loading, finished: finished,
+                                   navigationFailed: failed, onlySecureContent: secure)
+        }
+        XCTAssertEqual(info().connection, .encrypted)
+        XCTAssertEqual(info(secure: false).connection, .mixedContent)
+        XCTAssertEqual(info(loading: true).connection, .loading)
+        XCTAssertEqual(info(finished: false).connection, .unavailable)
+        XCTAssertEqual(info(failed: true).connection, .failed)
+        XCTAssertEqual(info(finished: false, failed: true).connection, .failed)
+        XCTAssertEqual(info().host, "example.com")
+        XCTAssertEqual(BrowserSiteInformation(url: nil, loading: false, finished: false,
+                                            navigationFailed: false, onlySecureContent: false).connection, .empty)
+        XCTAssertEqual(BrowserSiteInformation(url: URL(string: "http://example.com"), loading: false,
+                                            finished: true, navigationFailed: false, onlySecureContent: false).connection, .unencrypted)
+    }
+
+    func testTerminatedPageReportsFailedConnectionUntilReload() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let tab = workspace.newTab(url: base.appendingPathComponent("article"))
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        workspace.webViewWebContentProcessDidTerminate(tab.webView)
+        XCTAssertEqual(tab.navigationErrorCode, WKError.webContentProcessTerminated.rawValue)
+        XCTAssertEqual(tab.navigationErrorDomain, WKError.errorDomain)
+        tab.webView.reload()
+        try await waitUntil { tab.finishedRevision > 1 && !tab.webView.isLoading }
+        XCTAssertNil(tab.navigationErrorCode)
+    }
+
     func testAddressFieldNavigatesNewUserTabOnReturn() async throws {
         let (server, base) = try fixture()
         defer { server.terminate() }
