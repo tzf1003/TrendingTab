@@ -3,6 +3,16 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/device-article") {
+    const agent = JSON.stringify(request.headers["user-agent"] || "").replaceAll("<", "\\u003c");
+    const cookie = JSON.stringify(request.headers.cookie || "").replaceAll("<", "\\u003c");
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "set-cookie": "layout-session=fixture; Path=/; SameSite=Lax" }).end(`<!doctype html><html><head><title>自适应阅读</title>
+      ${url.searchParams.has("viewport") ? '<meta name="viewport" content="width=700, initial-scale=0.8">' : ""}
+      <style>body{margin:24px;font:18px -apple-system,sans-serif;line-height:1.7;background:#f7f5f0;color:#28323e}article{max-width:820px}h1{font-size:28px}#details{color:#657384}input{font:inherit;width:90%}.space{height:1600px}</style>
+      </head><body><article><h1>自适应阅读</h1><p id="style"></p><p id="details"></p><label>阅读笔记<input aria-label="阅读笔记"></label><p>旋转或调整浏览区不会刷新正文。通过工具栏切换浏览版本。</p><div class="space"></div><p>文章结尾</p></article>
+      <script>window.receivedAgent=${agent};window.receivedCookie=${cookie};document.querySelector('#style').textContent=receivedAgent.includes('iPhone')?'手机版原文':'电脑版原文';document.querySelector('#details').textContent='浏览宽度 '+innerWidth+'，高度 '+innerHeight;</script></body></html>`);
+    return;
+  }
   if (url.pathname === "/input-search") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>站内搜索</title></head><body>
       <form action="/write"><label>站内搜索<input type="search" name="q"></label><button>搜索</button></form>

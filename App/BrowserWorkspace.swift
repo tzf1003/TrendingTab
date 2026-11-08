@@ -28,6 +28,23 @@ private final class WorkspaceWebView: WKWebView {
     override var acceptsFirstResponder: Bool { permitsKeyboardFocus && super.acceptsFirstResponder }
 }
 
+enum BrowserPageStyle: Equatable {
+    case desktop, mobile
+
+    static func initialStyle(for size: CGSize) -> Self {
+        size.width > 0 && size.height > size.width ? .mobile : .desktop
+    }
+
+    var title: String { self == .mobile ? "手机版" : "电脑版" }
+    var symbol: String { self == .mobile ? "iphone" : "desktopcomputer" }
+    var opposite: Self { self == .mobile ? .desktop : .mobile }
+    var userAgent: String? {
+        self == .mobile
+            ? "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+            : nil
+    }
+}
+
 enum ResearchNavigationPolicy {
     static func allows(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil,
@@ -91,6 +108,8 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         @Published var showingReader = false
         @Published var extractingReader = false
         @Published var userTookControl = false
+        @Published fileprivate(set) var pageStyle: BrowserPageStyle = .desktop
+        fileprivate var preferredPageStyle: BrowserPageStyle?
         var needsUserAction = false
         var blockedAction: BlockedAction?
         var approvedNavigation: ApprovedNavigation?
@@ -131,6 +150,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     private let dataStore: WKWebsiteDataStore
     private let researchURLAllowed: (URL) -> Bool
     private var userInputMonitor: LocalEventMonitor?
+    private(set) var viewportSize = CGSize(width: 1024, height: 768)
 
     init(dataStore: WKWebsiteDataStore? = nil, researchURLAllowed: @escaping (URL) -> Bool = ResearchNavigationPolicy.allows) {
         self.dataStore = dataStore ?? Self.persistentDataStore()
@@ -181,18 +201,48 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
 
     var selected: Tab? { tabs.first { $0.id == selectedID } }
 
+    /// Record layout for the next navigation; resizing never changes a live page.
+    func updateViewportSize(_ size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
+        viewportSize = size
+    }
+
+    private func preparePageStyle(in tab: Tab) {
+        tab.pageStyle = tab.preferredPageStyle ?? .initialStyle(for: viewportSize)
+        tab.webView.customUserAgent = tab.pageStyle.userAgent
+    }
+
+    func togglePageStyle(in tab: Tab) {
+        guard tabs.contains(where: { $0 === tab }) else { return }
+        noteUserInteraction(in: tab)
+        tab.preferredPageStyle = tab.pageStyle.opposite
+        preparePageStyle(in: tab)
+        if tab.webView.url != nil { tab.webView.reload() }
+    }
+
     @discardableResult
     func newTab(owner: Owner = .user, taskID: String? = nil, url: URL? = nil, select: Bool = true) -> Tab {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
+        // Supply a responsive viewport only when a mobile page omitted its own.
+        // Preserve site-authored viewport settings, including login pages.
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            if (/iPhone.*Mobile/.test(navigator.userAgent) && !document.querySelector('meta[name="viewport" i]')) {
+                const viewport = document.createElement('meta');
+                viewport.name = 'viewport';
+                viewport.content = 'width=device-width, initial-scale=1';
+                document.head?.append(viewport);
+            }
+            """, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         return addTab(owner: owner, taskID: taskID, configuration: configuration, url: url, select: select)
     }
 
     private func addTab(owner: Owner, taskID: String?, configuration: WKWebViewConfiguration, url: URL?, select: Bool) -> Tab {
-        // Research tabs need a desktop viewport even before the user previews them.
-        let initialFrame = owner == .agent ? CGRect(x: 0, y: 0, width: 1024, height: 768) : .zero
+        // Background research starts with the same viewport as the reading pane.
+        let initialFrame = CGRect(origin: .zero, size: viewportSize)
         let webView = WorkspaceWebView(frame: initialFrame, configuration: configuration)
         let tab = Tab(owner: owner, agentTaskID: taskID, webView: webView)
+        preparePageStyle(in: tab)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         tab.observations = [
@@ -232,6 +282,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
             return
         }
         tab.error = nil
+        preparePageStyle(in: tab)
         tab.webView.load(URLRequest(url: url))
     }
 
@@ -492,6 +543,11 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
            let url = navigationAction.request.url, !allowsResearchNavigation(to: url) { return nil }
         let child = addTab(owner: owner, taskID: owner == .agent ? parent?.agentTaskID : nil,
                            configuration: configuration, url: nil, select: false)
+        if let parent {
+            child.preferredPageStyle = parent.preferredPageStyle
+            child.pageStyle = parent.pageStyle
+            child.webView.customUserAgent = parent.webView.customUserAgent
+        }
         if owner == .user { selectTab(child) }
         return child.webView
     }
@@ -524,7 +580,7 @@ struct BrowserWorkspaceView: View {
                 BrowserTabContent(workspace: workspace, tab: tab)
             } else {
                 ZStack {
-                    BrowserPageDeck(tabs: workspace.tabs, selectedID: nil).allowsHitTesting(false).accessibilityHidden(true)
+                    BrowserPageDeck(workspace: workspace, selectedID: nil).allowsHitTesting(false).accessibilityHidden(true)
                     ContentUnavailableView("选择一条热点", systemImage: "globe", description: Text("原文将在这里打开。"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity).background(AppTheme.canvas)
                 }
@@ -556,7 +612,7 @@ private struct BrowserTabContent: View {
                     .padding(8)
             }
             ZStack {
-                BrowserPageDeck(tabs: workspace.tabs, selectedID: tab.id)
+                BrowserPageDeck(workspace: workspace, selectedID: tab.id)
                     .allowsHitTesting(!tab.showingReader)
                     .accessibilityHidden(tab.showingReader)
                 if tab.showingReader, let content = tab.readerContent {
@@ -602,6 +658,13 @@ private struct BrowserTabContent: View {
                     let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
                     if let url = URL(string: value.contains("://") ? value : "https://" + value) { workspace.load(url, in: tab) }
                 }
+            Button { workspace.togglePageStyle(in: tab) } label: {
+                Image(systemName: tab.pageStyle.symbol)
+            }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+                .help("当前为\(tab.pageStyle.title)，切换至\(tab.pageStyle.opposite.title)并刷新")
+                .accessibilityLabel("切换至\(tab.pageStyle.opposite.title)并刷新")
+                .accessibilityValue(tab.pageStyle.title)
             Button {
                 workspace.noteUserInteraction(in: tab)
                 if tab.showingReader { tab.showingReader = false }
@@ -654,16 +717,27 @@ private struct BrowserTabButton: View {
 @MainActor
 private final class BrowserDeckView: NSView {
     weak var selectedPage: WKWebView?
+    var viewportDidChange: ((CGSize) -> Void)?
+    private var reportedSize: CGSize = .zero
     override func accessibilityChildren() -> [Any]? { selectedPage.map { [$0] } ?? [] }
+    override func layout() {
+        super.layout()
+        if bounds.size != reportedSize {
+            reportedSize = bounds.size
+            viewportDidChange?(bounds.size)
+        }
+    }
 }
 
 private struct BrowserPageDeck: NSViewRepresentable {
-    let tabs: [BrowserWorkspace.Tab]
+    @ObservedObject var workspace: BrowserWorkspace
     let selectedID: UUID?
 
     func makeNSView(context: Context) -> BrowserDeckView { BrowserDeckView() }
 
     func updateNSView(_ view: BrowserDeckView, context: Context) {
+        let tabs = workspace.tabs
+        view.viewportDidChange = { [weak workspace] size in workspace?.updateViewportSize(size) }
         view.selectedPage = tabs.first(where: { $0.id == selectedID })?.webView
         let liveViews = Set(tabs.map { ObjectIdentifier($0.webView) })
         for child in view.subviews where !liveViews.contains(ObjectIdentifier(child)) { child.removeFromSuperview() }

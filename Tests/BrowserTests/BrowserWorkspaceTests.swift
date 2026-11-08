@@ -49,6 +49,111 @@ final class BrowserWorkspaceTests: XCTestCase {
         return try JSONDecoder().decode(AgentStreamEvent.ToolRequest.self, from: JSONSerialization.data(withJSONObject: value))
     }
 
+    func testInitialPageStyleFollowsViewportOrientation() {
+        XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 450, height: 750)), .mobile)
+        XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 1100, height: 1300)), .mobile)
+        XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 900, height: 550)), .desktop)
+        XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 600, height: 600)), .desktop)
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        workspace.updateViewportSize(.zero)
+        XCTAssertEqual(workspace.viewportSize, CGSize(width: 1024, height: 768))
+    }
+
+    func testMobileRequestAndViewportPreserveSiteAuthoredSettings() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        workspace.updateViewportSize(CGSize(width: 450, height: 750))
+        let tab = workspace.newTab(url: base.appendingPathComponent("device-article"))
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        let header = try await tab.webView.evaluateJavaScript("window.receivedAgent") as? String
+        XCTAssertEqual(header, BrowserPageStyle.mobile.userAgent)
+        XCTAssertTrue(header?.contains("iPhone") == true)
+        let navigator = try await tab.webView.evaluateJavaScript("navigator.userAgent") as? String
+        XCTAssertEqual(navigator, header)
+        let viewport = try await tab.webView.evaluateJavaScript("document.querySelector('meta[name=viewport]')?.content") as? String
+        XCTAssertEqual(viewport, "width=device-width, initial-scale=1")
+        workspace.load(URL(string: base.appendingPathComponent("device-article").absoluteString + "?viewport=1")!, in: tab)
+        try await waitUntil { tab.finishedRevision > 1 && !tab.webView.isLoading }
+        let authored = try await tab.webView.evaluateJavaScript("document.querySelector('meta[name=viewport]')?.content") as? String
+        XCTAssertEqual(authored, "width=700, initial-scale=0.8")
+    }
+
+    func testResizePreservesPageDraftAndScrollUntilExplicitStyleToggle() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        workspace.updateViewportSize(CGSize(width: 450, height: 750))
+        let tab = workspace.newTab(url: base.appendingPathComponent("device-article"))
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        _ = try await tab.webView.evaluateJavaScript("document.querySelector('input').value='未提交笔记';scrollTo(0,400)")
+        let revision = tab.navigationRevision
+        let interaction = tab.userInteractionRevision
+        workspace.updateViewportSize(CGSize(width: 1100, height: 600))
+        XCTAssertEqual(tab.pageStyle, .mobile)
+        XCTAssertEqual(tab.webView.customUserAgent, BrowserPageStyle.mobile.userAgent)
+        XCTAssertEqual(tab.navigationRevision, revision)
+        XCTAssertEqual(tab.userInteractionRevision, interaction)
+        let draft = try await tab.webView.evaluateJavaScript("document.querySelector('input').value") as? String
+        XCTAssertEqual(draft, "未提交笔记")
+        let scroll = try await tab.webView.evaluateJavaScript("scrollY") as? Double
+        XCTAssertGreaterThan(scroll ?? 0, 0)
+        workspace.togglePageStyle(in: tab)
+        try await waitUntil { tab.finishedRevision > revision && !tab.webView.isLoading }
+        XCTAssertEqual(tab.pageStyle, .desktop)
+        XCTAssertTrue(tab.webView.customUserAgent?.isEmpty != false)
+        let desktopHeader = try await tab.webView.evaluateJavaScript("window.receivedAgent") as? String
+        XCTAssertTrue(desktopHeader?.contains("Macintosh") == true)
+        let cookie = try await tab.webView.evaluateJavaScript("window.receivedCookie") as? String
+        XCTAssertTrue(cookie?.contains("layout-session=fixture") == true)
+        workspace.updateViewportSize(CGSize(width: 400, height: 800))
+        workspace.load(base.appendingPathComponent("device-article"), in: tab)
+        try await waitUntil { tab.finishedRevision > revision + 1 && !tab.webView.isLoading }
+        XCTAssertEqual(tab.pageStyle, .desktop, "Manual selection persists within this tab")
+        let next = workspace.newTab(url: base.appendingPathComponent("device-article"))
+        XCTAssertEqual(next.pageStyle, .mobile, "A new tab uses the current viewport")
+        workspace.close(next)
+    }
+
+    func testAgentInitialStyleAndExplicitToggleRevokeAuthority() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        workspace.updateViewportSize(CGSize(width: 450, height: 750))
+        let user = workspace.newTab()
+        let agent = workspace.newTab(owner: .agent, taskID: "run", url: base.appendingPathComponent("device-article"), select: false)
+        try await waitUntil { agent.finishedRevision > 0 && !agent.webView.isLoading }
+        XCTAssertEqual(agent.pageStyle, .mobile)
+        XCTAssertEqual(agent.webView.frame.size, workspace.viewportSize)
+        let revision = agent.navigationRevision
+        workspace.updateViewportSize(CGSize(width: 1000, height: 600))
+        XCTAssertFalse(agent.userTookControl)
+        XCTAssertEqual(agent.navigationRevision, revision)
+        workspace.togglePageStyle(in: agent)
+        try await waitUntil { agent.finishedRevision > revision && !agent.webView.isLoading }
+        XCTAssertTrue(agent.userTookControl)
+        XCTAssertEqual(agent.pageStyle, .desktop)
+        XCTAssertEqual(workspace.selectedID, user.id)
+        XCTAssertEqual(user.pageStyle, .mobile)
+    }
+
+    func testPageDeckReportsActualViewportWithoutReloadingDuringResize() async throws {
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let window = BrowserWindow(contentRect: CGRect(x: 0, y: 0, width: 450, height: 800),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace))
+        defer { window.close() }
+        try await waitUntil { workspace.viewportSize.width == 450 && workspace.viewportSize.height > 450 }
+        let tab = workspace.newTab()
+        XCTAssertEqual(tab.pageStyle, .mobile)
+        window.setContentSize(CGSize(width: 1100, height: 600))
+        try await waitUntil { workspace.viewportSize.width == 1100 && workspace.viewportSize.height < 1100 }
+        XCTAssertEqual(tab.pageStyle, .mobile)
+        XCTAssertEqual(tab.navigationRevision, 0)
+        XCTAssertEqual(workspace.newTab().pageStyle, .desktop)
+    }
+
     func testSiteInformationUsesCompletedSecureLoadAndSeparatesFailureFromHTTPSAddress() {
         let url = URL(string: "https://example.com/story?session=private#part")!
         func info(loading: Bool = false, finished: Bool = true, failed: Bool = false,
