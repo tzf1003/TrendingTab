@@ -491,6 +491,13 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        // App-opening links are not document navigations. Preserve the current
+        // article and its permissions when a site tries to launch a native app.
+        if let scheme = navigationAction.request.url?.scheme,
+           !WKWebView.handlesURLScheme(scheme.lowercased()) {
+            decisionHandler(.cancel)
+            return
+        }
         guard let tab = tabs.first(where: { $0.webView === webView }), tab.owner == .agent,
               !tab.userTookControl else { decisionHandler(.allow); return }
         let mainFrame = navigationAction.targetFrame?.isMainFrame ?? true
@@ -585,6 +592,8 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let scheme = navigationAction.request.url?.scheme,
+           !WKWebView.handlesURLScheme(scheme.lowercased()) { return nil }
         let parent = tabs.first { $0.webView === webView }
         let owner: Owner = parent?.userTookControl == true ? .user : (parent?.owner ?? .user)
         if owner == .agent,

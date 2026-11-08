@@ -3,6 +3,25 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/app-redirect") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>保留网页阅读</title></head><body>
+      <article><h1>可阅读的报道</h1><p>网站希望打开应用时，原文仍可继续阅读。</p></article>
+      <a id="application" href="trendingtab-fixture://open/article">打开应用</a>
+      <a id="popup" href="trendingtab-fixture://open/article" target="_blank">新窗口打开应用</a>
+      <script>window.redirectAttempted=false;setTimeout(()=>{window.redirectAttempted=true;location.href='trendingtab-fixture://open/article'},100)</script>
+      </body></html>`);
+    return;
+  }
+  if (url.pathname === "/optional-login" || url.pathname === "/modal-login") {
+    const modal = url.pathname === "/modal-login";
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>公开报道</title></head><body>
+      <main><article><h1>公开报道</h1><p>这篇报道的正文已经公开展示，阅读时不需要登录。</p></article></main>
+      <${modal ? 'div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:white"' : 'aside'}>
+      <h2>登录后订阅</h2><form><input type="password" value="fixture-only-password"><button>登录</button></form>
+      <p>扫码登录</p><canvas width="100" height="100"></canvas></${modal ? 'div' : 'aside'}>
+      </body></html>`);
+    return;
+  }
   if (url.pathname === "/tone.wav") {
     const rate = 8000, samples = rate * 2;
     const wave = Buffer.alloc(44 + samples * 2);
@@ -280,9 +299,9 @@ const server = createServer(async (request, response) => {
   const text = url.pathname === "/long" ? "甲".repeat(9000) + "终点" : url.pathname === "/login" ? "已建立测试登录状态" : authenticated ? "登录后可见的文章正文" : "游客内容";
   const headers = { "content-type": "text/html; charset=utf-8" };
   if (url.pathname === "/login") headers["set-cookie"] = "test_session=fixture; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax";
-  const challenge = url.pathname === "/challenge" ? '<input type="password" placeholder="登录">' :
+  const challenge = url.pathname === "/challenge" ? '<form><p>登录后查看报道</p><input type="password" placeholder="登录"></form>' :
     (url.pathname === "/captcha" ? '<div data-sitekey="fixture" style="width:100px;height:100px">验证</div>' :
       (url.pathname === "/qr" ? '<div>扫码登录</div><canvas width="100" height="100"></canvas>' : ""));
-  response.writeHead(200, headers).end(`<!doctype html><html><head><title>${title}</title></head><body><article style="min-height:4000px">${text}</article><a id="next" href="/long?page=2">下一页</a><details><summary>展开更多内容</summary>展开后的正文</details>${challenge}<form method="post" action="/write?draft=example"><button id="submit">提交</button></form></body></html>`);
+  response.writeHead(200, headers).end(`<!doctype html><html><head><title>${title}</title></head><body><article style="min-height:4000px;${url.pathname === '/challenge' ? 'display:none' : ''}">${text}</article><a id="next" href="/long?page=2">下一页</a><details><summary>展开更多内容</summary>展开后的正文</details>${challenge}<form method="post" action="/write?draft=example"><button id="submit">提交</button></form></body></html>`);
 });
 server.listen(0, "127.0.0.1", () => console.log(server.address().port));

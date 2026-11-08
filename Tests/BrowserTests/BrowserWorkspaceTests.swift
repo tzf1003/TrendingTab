@@ -288,6 +288,57 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertEqual(header, BrowserPageStyle.mobile.userAgent)
     }
 
+    func testApplicationSchemeRedirectPreservesUserArticle() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        workspace.updateViewportSize(CGSize(width: 500, height: 800))
+        let tab = workspace.newTab(url: base.appendingPathComponent("app-redirect"))
+        defer { workspace.close(tab) }
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        try await Task.sleep(for: .milliseconds(300))
+        let attempted = try await tab.webView.evaluateJavaScript("window.redirectAttempted") as? Bool
+        XCTAssertEqual(attempted, true)
+        XCTAssertEqual(tab.webView.url, base.appendingPathComponent("app-redirect"))
+        XCTAssertNil(tab.error, "An app-opening attempt must not turn a readable article into a navigation failure")
+        XCTAssertNil(tab.navigationErrorCode)
+        XCTAssertEqual(tab.navigationRevision, 1)
+        let reader = Task { await workspace.showReader(in: tab) }
+        await reader.value
+        XCTAssertTrue(tab.readerContent?.text.contains("原文仍可继续阅读") == true)
+        tab.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        _ = try await tab.webView.evaluateJavaScript("window.open('trendingtab-fixture://open/article','_blank');void 0")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(workspace.tabs.count, 1)
+        XCTAssertEqual(workspace.selectedID, tab.id)
+    }
+
+    func testApplicationSchemeAttemptKeepsAgentArticleReadableAndAvoidsBlankPopups() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let user = workspace.newTab()
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("app-redirect").absoluteString]),
+                                     runID: "app-redirect", itemID: "story", taskTitle: "测试")
+        let agent = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
+        defer { workspace.close(agent); workspace.close(user) }
+        try await waitUntil { agent.finishedRevision > 0 && !agent.webView.isLoading }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(agent.error)
+        XCTAssertEqual(agent.navigationRevision, 1)
+        let text = try await broker.execute(request(.readAIPage, ["tabID": agent.id.uuidString]),
+                                           runID: "app-redirect", itemID: "story", taskTitle: "测试")
+        XCTAssertTrue(text.contains("原文仍可继续阅读"), text)
+        XCTAssertEqual(workspace.selectedID, user.id)
+        XCTAssertFalse(agent.userTookControl)
+        agent.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        _ = try await agent.webView.evaluateJavaScript("window.open('trendingtab-fixture://open/article','_blank');void 0")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(workspace.tabs.count, 2, "App links must not create blank research tabs")
+        XCTAssertEqual(agent.webView.url, base.appendingPathComponent("app-redirect"))
+    }
+
     func testSiteInformationUsesCompletedSecureLoadAndSeparatesFailureFromHTTPSAddress() {
         let url = URL(string: "https://example.com/story?session=private#part")!
         func info(loading: Bool = false, finished: Bool = true, failed: Bool = false,
@@ -2395,6 +2446,40 @@ final class BrowserWorkspaceTests: XCTestCase {
         do { _ = try await cancelled.value; XCTFail("取消后不应读取页面") }
         catch is CancellationError { XCTAssertNil(broker.loginRequest) }
         XCTAssertTrue(agent.userTookControl)
+    }
+
+    func testPublicArticleWithOptionalPasswordAndQRLoginCanBeRead() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("optional-login").absoluteString]),
+                                     runID: "public", itemID: "story", taskTitle: "测试")
+        let tab = try XCTUnwrap(workspace.tabs.first)
+        defer { workspace.close(tab) }
+        let text = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                           runID: "public", itemID: "story", taskTitle: "测试")
+        XCTAssertTrue(text.contains("正文已经公开展示"), text)
+        XCTAssertTrue(text.contains("证据编号"), text)
+        XCTAssertFalse(text.contains("wait_for_login"), text)
+        XCTAssertFalse(text.contains("fixture-only-password"), text)
+        XCTAssertNil(broker.loginRequest)
+    }
+
+    func testBlockingLoginDialogStillRequestsUserVerification() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let broker = BrowserToolBroker(workspace: workspace)
+        _ = try await broker.execute(request(.openAIPage, ["url": base.appendingPathComponent("modal-login").absoluteString]),
+                                     runID: "gated", itemID: "story", taskTitle: "测试")
+        let tab = try XCTUnwrap(workspace.tabs.first)
+        defer { workspace.close(tab) }
+        let text = try await broker.execute(request(.readAIPage, ["tabID": tab.id.uuidString]),
+                                           runID: "gated", itemID: "story", taskTitle: "测试")
+        XCTAssertTrue(text.contains("wait_for_login"), text)
+        XCTAssertFalse(text.contains("证据编号"), text)
+        XCTAssertFalse(text.contains("fixture-only-password"), text)
     }
 
     func testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances() async throws {

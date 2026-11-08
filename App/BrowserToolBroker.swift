@@ -1216,8 +1216,12 @@ final class BrowserToolBroker: ObservableObject {
         let script = """
         (() => { const body = document.body?.innerText || '';
             const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
-            const challenge = Array.from(document.querySelectorAll('input[type="password"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], [data-sitekey]')).some(visible);
+            const verification = Array.from(document.querySelectorAll('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], [data-sitekey]')).some(visible);
+            const passwordLogin = Array.from(document.querySelectorAll('input[type="password"]')).some(visible);
             const qrLogin = /扫码登录|二维码登录|扫描二维码登录/.test(body) && Array.from(document.querySelectorAll('img, canvas')).some(visible);
+            const blockingLogin = Array.from(document.querySelectorAll('[aria-modal="true"], dialog[open]')).some(element =>
+                visible(element) && (Array.from(element.querySelectorAll('input[type="password"]')).some(visible) ||
+                    /扫码登录|二维码登录|扫描二维码登录/.test(element.innerText || '')));
             const eligible = element => visible(element) && !element.closest('nav,aside,form,[hidden]');
             const main = Array.from(document.querySelectorAll('main, [role="main"]')).find(eligible);
             const article = Array.from(document.querySelectorAll('article')).find(eligible);
@@ -1252,8 +1256,12 @@ final class BrowserToolBroker: ObservableObject {
                 pieces.push(text);
                 size += text.length + 1;
             }
-            return JSON.stringify({title: document.title, text: pieces.join('\\n'), truncated,
-                loginRequired: challenge || qrLogin}); })()
+            const text = pieces.join('\\n');
+            // Optional sign-in controls beside an already visible article do
+            // not gate that material. Verification and modal login still wait.
+            const readableArticle = !!(article || main) && text.replace(/\\s/g, '').length >= 20;
+            return JSON.stringify({title: document.title, text, truncated,
+                loginRequired: verification || blockingLogin || ((passwordLogin || qrLogin) && !readableArticle)}); })()
         """
         func stillPermitted() -> Bool {
             !endedRuns.contains(runID) && workspace.tabs.contains(where: { $0 === tab }) &&

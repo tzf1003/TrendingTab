@@ -9,6 +9,7 @@
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
 | 中栏原文浏览、导航、地址、阅读模式、外部打开 | `App/BrowserWorkspace.swift`；阅读模式回归及正式版原文／引用打开记录；地址栏从已加载标签切换至空白标签后的回车回归，Atlas 实际输入新地址并确认原标签保持 | 基础流程已验收；地址栏标签路由修正通过本地、CI 及正式发布包的 Atlas 检查 |
+| 站点尝试唤起 App 时保留网页阅读 | 导航代理取消不受支持的应用协议，保持原文、导航版本与 AI 权限；同类弹窗不创建空白页 | 用户／AI 标签回归及 Atlas 独立预览通过；正式包实际站点待读回 |
 | 手机／桌面版本、初始横竖比例、手动切换刷新 | `BrowserPageStyle`、当前标签工具栏；实际 HTTP 请求及脚本身份、站点 viewport、Cookie、调整宽度保留草稿和滚动、独立标签及 AI 接管回归 | 5 项定向及 83 项完整浏览器回归通过（2 项真实网络跳过）；Atlas 独立预览确认初始手机、切换桌面、新横向标签桌面显示，实际鼠标点击受系统浮层影响，使用按钮快捷键验收 |
 | 网页默认静音、独立声音按钮及播放提示 | `BrowserAudioController`；HTML 媒体、Web Audio、动态播放器、跨站 iframe、播放位置、刷新与标签隔离测试；首次竖向窗口加载回归 | 定向及 87 项完整浏览器回归通过（2 项真实网络跳过）；Atlas 显示静音播放气泡、切换后声音状态及气泡消失，尚未做实际扬声器声学验收 |
 | 站点信息、连接状态与标签权限说明 | 地址栏旁的“站点信息”按钮；连接状态结合 WebKit 安全内容、加载完成和导航错误，登录状态由网站判断；切换标签／站点后关闭面板 | 定向回归与 Atlas 独立预览通过；打开 AI 标签的面板后仍显示“AI 可操作” |
@@ -16,7 +17,7 @@
 | 用户／AI 两组标签与弹窗身份 | `testPopupOwnershipFollowsCurrentController`，预览与实际网页输入分别处理 | 自动回归及正式版预览通过 |
 | 稳定持久网站存储、重启／升级后登录复用 | `WKWebsiteDataStore(forIdentifier:)`；`testNamedWebsiteStoreSharesLoginAcrossWorkspaceInstances`；知乎重启与应用内更新记录 | 知乎实际通过；其他站点按下表验收 |
 | 管理、清除站点数据及共享身份说明 | 浏览器设置、`clearWebsiteData`，Cookie 与站点存储清理回归 | 已实现并有测试 |
-| 登录、验证码、过期时等待与恢复 | `testCaptchaPageRequestsUserVerification`、`testLoginWaitRestoresResearchAndCancellation`、`testUserCanResumeBlockedPageWithoutNavigation` | 模拟流程通过；真实验证码由用户完成 |
+| 登录、验证码、过期时等待与恢复 | `testCaptchaPageRequestsUserVerification`、`testLoginWaitRestoresResearchAndCancellation`、`testUserCanResumeBlockedPageWithoutNavigation`；可见文章旁的可选登录与遮挡正文的模态登录分别回归 | 模拟流程通过；公开材料可继续读取，实际验证等待用户完成 |
 | AI 后台保持用户标签 URL、焦点、位置 | `testSharedLoginAndBackgroundResearchRespectUserTab`、滚动回归；真实知乎预览与连续追问记录；v0.2.48 实际后台打开 Bing 后用户页保持显示，聊天输入值与焦点保持，完整 AX 树仅公开当前页 | 自动回归与实际全窗口交互通过 |
 | 用户页本轮读／操作授权，接管／导航／结束后失效 | 用户授权、导航、会话结束、迟到工具请求和操作确认测试 | 自动回归通过 |
 | AI 自主观察、读取、查找、滚动、展开、打开链接 | `BrowserToolBroker`、`tool-catalog.mjs`；整页与内层滚动；实际 Pi 工具链和知乎读取 | 自动回归及知乎实际通过 |
