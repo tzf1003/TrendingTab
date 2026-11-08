@@ -185,7 +185,7 @@ async function waitFor(predicate) {
     if (message) return message;
     await delay(25);
   }
-  throw new Error(`timeout: ${JSON.stringify(messages)}; stderr=${stderr}`);
+  throw new Error(`timeout: last 12 of ${messages.length} messages=${JSON.stringify(messages.slice(-12))}; stderr=${stderr}`);
 }
 
 try {
@@ -425,42 +425,46 @@ try {
   send({ jsonrpc: "2.0", id: 18, method: "run", params: { runID: "deadline", sessionID: "deadline", connection,
     apiKey: "secret-for-test", prompt: "取消测试", limits: { maxActiveMs: 100 } } });
   assert.match((await waitFor((m) => m.params?.runID === "deadline" && m.params.type === "error")).params.message, /执行时间上限/);
+  // Allow SDK/model startup on hosted runners, then wait longer than the
+  // entire active budget to prove that host authorization pauses the clock.
+  const authorizationBudgetMs = 2_000;
+  const authorizationWaitMs = authorizationBudgetMs + 500;
   send({ jsonrpc: "2.0", id: 19, method: "run", params: { runID: "permission", sessionID: "permission", connection,
-    apiKey: "secret-for-test", prompt: "申请授权", tools: ["request_user_page"], limits: { maxActiveMs: 300 } } });
+    apiKey: "secret-for-test", prompt: "申请授权", tools: ["request_user_page"], limits: { maxActiveMs: authorizationBudgetMs } } });
   const permission = (await waitFor((m) => m.params?.runID === "permission" && m.params.type === "tool_request")).params.toolRequest;
-  await delay(500);
+  await delay(authorizationWaitMs);
   assert.ok(!messages.some((m) => m.params?.runID === "permission" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: 20, method: "toolResult", params: { runID: "permission", requestID: permission.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor((m) => m.params?.runID === "permission" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   send({ jsonrpc: "2.0", id: "submit-wait", method: "run", params: { runID: "submit-wait", sessionID: "submit-wait", connection,
-    apiKey: "secret-for-test", prompt: "申请提交", tools: ["submit_ai_form"], limits: { maxActiveMs: 300 } } });
+    apiKey: "secret-for-test", prompt: "申请提交", tools: ["submit_ai_form"], limits: { maxActiveMs: authorizationBudgetMs } } });
   const submission = (await waitFor(m => m.params?.runID === "submit-wait" && m.params.type === "tool_request")).params.toolRequest;
   assert.equal(submission.arguments.reference, "test-ref");
-  await delay(500);
+  await delay(authorizationWaitMs);
   assert.ok(!messages.some(m => m.params?.runID === "submit-wait" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: "submit-result", method: "toolResult", params: { runID: "submit-wait", requestID: submission.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor(m => m.params?.runID === "submit-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   send({ jsonrpc: "2.0", id: "button-wait", method: "run", params: { runID: "button-wait", sessionID: "button-wait", connection,
-    apiKey: "secret-for-test", prompt: "申请按钮", tools: ["click_ai_button"], limits: { maxActiveMs: 300 } } });
+    apiKey: "secret-for-test", prompt: "申请按钮", tools: ["click_ai_button"], limits: { maxActiveMs: authorizationBudgetMs } } });
   const buttonRequest = (await waitFor(m => m.params?.runID === "button-wait" && m.params.type === "tool_request")).params.toolRequest;
   assert.equal(buttonRequest.arguments.reference, "test-ref");
-  await delay(500);
+  await delay(authorizationWaitMs);
   assert.ok(!messages.some(m => m.params?.runID === "button-wait" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: "button-result", method: "toolResult", params: { runID: "button-wait", requestID: buttonRequest.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor(m => m.params?.runID === "button-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   send({ jsonrpc: "2.0", id: "fill-wait", method: "run", params: { runID: "fill-wait", sessionID: "fill-wait", connection,
-    apiKey: "fixture-key", prompt: "填写输入", tools: ["fill_ai_field"], limits: { maxActiveMs: 300 } } });
+    apiKey: "fixture-key", prompt: "填写输入", tools: ["fill_ai_field"], limits: { maxActiveMs: authorizationBudgetMs } } });
   const fillRequest = (await waitFor(m => m.params?.runID === "fill-wait" && m.params.type === "tool_request")).params.toolRequest;
   assert.equal(fillRequest.arguments.text, "新闻");
-  await delay(500);
+  await delay(authorizationWaitMs);
   assert.ok(!messages.some(m => m.params?.runID === "fill-wait" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: "fill-result", method: "toolResult", params: { runID: "fill-wait", requestID: fillRequest.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor(m => m.params?.runID === "fill-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
   send({ jsonrpc: "2.0", id: 25, method: "run", params: { runID: "login-wait", sessionID: "login-wait", connection,
-    apiKey: "secret-for-test", prompt: "等待验证", tools: ["wait_for_login"], limits: { maxActiveMs: 300 } } });
+    apiKey: "secret-for-test", prompt: "等待验证", tools: ["wait_for_login"], limits: { maxActiveMs: authorizationBudgetMs } } });
   const login = (await waitFor((m) => m.params?.runID === "login-wait" && m.params.type === "tool_request")).params.toolRequest;
   assert.equal(login.arguments.tabID, "test-tab");
-  await delay(500);
+  await delay(authorizationWaitMs);
   assert.ok(!messages.some((m) => m.params?.runID === "login-wait" && m.params.type === "error"));
   send({ jsonrpc: "2.0", id: 26, method: "toolResult", params: { runID: "login-wait", requestID: login.requestID, text: "页面标识 fixture" } });
   assert.equal((await waitFor((m) => m.params?.runID === "login-wait" && ["completed", "error"].includes(m.params.type))).params.type, "completed");
