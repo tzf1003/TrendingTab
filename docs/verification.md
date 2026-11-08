@@ -2,6 +2,14 @@
 
 ## 2026-11-08
 
+### 已安装组件架构校验与 v0.2.61
+
+正式版 [v0.2.61](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.61) 对应提交 `56df6039cfb785274635741a01a98dd055a8aa50`。[CI 42464362135](https://github.com/tzf1003/TrendingTab/actions/runs/42464362135) 的构建、公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生运行和发布全部通过。Swift 测试 121 项，4 项按环境条件跳过；浏览器测试 77 项，2 项真实网络测试按配置跳过，均无意外失败。网页脚本后台请求的兼容性边界继续由预期失败记录。
+
+从公开 Release 下载应用 DMG，SHA-256 为 `d63d6f69505692a6679db28b85733d16955adb1964e15dabf1ec3af5406731bf`，与 GitHub 资产 digest 和校验文件一致。镜像完整性、公证票据、深度签名、主应用及 Widget 身份通过；包内 5 个 Mach-O 文件均支持 arm64／x86_64，随包 Runtime 0.1.7、Pi 1.5.0 的 ARM 健康检查通过，包含流式和 20 项工具。独立 Runtime 继续使用 v0.2.60 发布的同版本制品，复用已有下载并再次完成镜像、票据、签名、3 个原生文件架构与 ARM 健康检查。验证挂载均已卸载。证据位于外接盘 `release-0.2.61/verification.json`。
+
+主账号 `/Applications/TrendingTab.app` 仍为 0.2.48。重新静态检查确认其主程序与 Widget 为 Universal，包内另有两份单架构 Node 和两份单架构 Pi 插件；本次检查未执行 Intel 代码。新版在已安装独立组件的启动验证及回退路径逐项检查原生文件。当前未替换主账号应用，Atlas 辅助账号保留 v0.2.60 的新闻站登录页面。本机 Gatekeeper 全局关闭，启用检查时的分发证据来自 CI；macOS 28 实机运行仍待验收。
+
 ### Universal Runtime 正式制品
 
 正式版 [v0.2.60](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.60) 对应提交 `2cac4c92dd0b`，[CI 42464122021](https://github.com/tzf1003/TrendingTab/actions/runs/42464122021) 的完整测试、两份 DMG 签名公证、组件安装回退、未公证镜像拒绝、Intel 原生验证和发布均通过。应用镜像 SHA-256 为 `18673b9a70a872c276b2ffb85e796d272f045d9f988d5893702ef90342364328`，Runtime 0.1.7 镜像为 `d51c3f006a892447a314ed95c8a427ccf884ec8673ab7c112ecb964847a363a1`；均与发布 digest 和校验文件一致。
