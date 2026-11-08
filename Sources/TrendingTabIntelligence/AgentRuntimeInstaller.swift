@@ -181,7 +181,12 @@ public actor AgentRuntimeInstaller {
         do { _ = try Self.run("/usr/bin/codesign", ["--verify", "--strict", "-R", imageRequirement, localImage.path], timeout: 30) }
         catch { throw AgentRuntimeVerificationError.invalidSignature }
         try Task.checkCancellation()
-        do { _ = try Self.runWithRetry("/usr/bin/xcrun", ["stapler", "validate", localImage.path], timeout: 30) }
+        do {
+            _ = try await AgentRuntimeNotarizationRetry.validate {
+                try Self.run("/usr/bin/xcrun", ["stapler", "validate", localImage.path], timeout: 30, captureError: true)
+            }
+        }
+        catch is CancellationError { throw CancellationError() }
         catch { throw AgentRuntimeInstallError.notarization }
         try Task.checkCancellation()
         let output = try Self.run("/usr/bin/hdiutil", ["attach", localImage.path, "-readonly", "-nobrowse", "-plist"], timeout: 60)
@@ -295,7 +300,7 @@ public actor AgentRuntimeInstaller {
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) throws -> Data {
+    private static func run(_ executable: String, _ arguments: [String], timeout: TimeInterval, captureError: Bool = false) throws -> Data {
         let child = Process()
         let output = Pipe()
         child.executableURL = URL(fileURLWithPath: executable)
@@ -304,8 +309,11 @@ public actor AgentRuntimeInstaller {
         child.standardOutput = output
         // Opt-in diagnostics help identify failures in CI without putting tool
         // output in normal application logs.
-        child.standardError = ProcessInfo.processInfo.environment["TRENDINGTAB_RUNTIME_DIAGNOSTICS"] == "1"
-            ? FileHandle.standardError : FileHandle.nullDevice
+        if captureError { child.standardError = output }
+        else {
+            child.standardError = ProcessInfo.processInfo.environment["TRENDINGTAB_RUNTIME_DIAGNOSTICS"] == "1"
+                ? FileHandle.standardError : FileHandle.nullDevice
+        }
         try child.run()
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         timer.schedule(deadline: .now() + timeout)
@@ -332,23 +340,44 @@ public actor AgentRuntimeInstaller {
                     + String(decoding: data, as: UTF8.self) + "\n"
                 FileHandle.standardError.write(Data(diagnostic.utf8))
             }
+            if captureError, !exceededLimit, child.terminationReason == .exit {
+                throw AgentRuntimeNotarizationFailure(status: child.terminationStatus, output: String(decoding: data, as: UTF8.self))
+            }
             throw AgentRuntimeInstallError.invalidPackage
         }
         return data
     }
 
-    private static func runWithRetry(_ executable: String, _ arguments: [String], timeout: TimeInterval) throws -> Data {
-        var lastError: Error?
-        for attempt in 1...3 {
-            do { return try run(executable, arguments, timeout: timeout) }
-            catch {
-                lastError = error
-                if attempt < 3 {
-                    try Task.checkCancellation()
-                    Thread.sleep(forTimeInterval: Double(attempt) * 5)
-                }
+}
+
+struct AgentRuntimeNotarizationFailure: Error, Sendable {
+    let status: Int32
+    let output: String
+
+    var isTransientNetworkFailure: Bool {
+        // Error 68 alone also covers invalid tickets. Retry only a diagnosed
+        // transport failure; a completed negative trust decision is final.
+        guard status == 68 else { return false }
+        return ["NSURLErrorDomain Code=-1005", "NSURLErrorDomain Code=-1001",
+                "NSURLErrorDomain Code=-1003", "NSURLErrorDomain Code=-1004"]
+            .contains(where: output.contains)
+    }
+}
+
+enum AgentRuntimeNotarizationRetry {
+    static func validate(
+        run: @Sendable () async throws -> Data,
+        wait: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) async throws -> Data {
+        let delays: [Duration] = [.seconds(5), .seconds(15), .seconds(30), .seconds(60)]
+        for attempt in 0...delays.count {
+            try Task.checkCancellation()
+            do { return try await run() }
+            catch let failure as AgentRuntimeNotarizationFailure {
+                guard failure.isTransientNetworkFailure, attempt < delays.count else { throw failure }
+                try await wait(delays[attempt])
             }
         }
-        throw lastError ?? AgentRuntimeInstallError.notarization
+        throw AgentRuntimeInstallError.notarization
     }
 }
