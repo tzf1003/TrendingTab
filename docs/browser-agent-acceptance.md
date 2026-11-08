@@ -2,7 +2,7 @@
 
 本清单覆盖浏览器与站点身份、Pi 模型与工具、自动任务、Runtime 更新及 macOS 分发。代码、模拟测试、真实站点及发布制品分别作为证据；记录为“待验收”的条目需要补齐对应环境中的实际结果。
 
-最近完成制品校验的正式版为 [v0.2.61](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.61)，随包 Runtime 0.1.7、Pi 1.5.0。[CI 42464362135](https://github.com/tzf1003/TrendingTab/actions/runs/42464362135) 已通过签名、公证、组件安装回退、已安装组件的全量架构回归及 Intel 原生验证。本地核对实际镜像、签名、票据、每个原生文件的双架构与 ARM 健康检查；独立 Runtime 继续使用 v0.2.60 发布的同版本制品。辅助账号保留 v0.2.60，已通过真实模型完成研究标签查询和微博连续研究，新闻站页面等待用户登录。完整站点研究按下表分别记录。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
+最近完成制品校验的正式版为 [v0.2.62](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.62)，随包 Runtime 0.1.7、Pi 1.5.0。[CI 42470791196](https://github.com/tzf1003/TrendingTab/actions/runs/42470791196) 已通过签名、公证、组件安装回退、已安装组件的全量架构回归及 Intel 原生验证。本地核对实际镜像、签名、票据、每个原生文件的双架构与 ARM 健康检查；独立 Runtime 继续使用 v0.2.60 发布的同版本制品。辅助账号保留 v0.2.60，已通过真实模型完成研究标签查询和微博连续研究，新闻站页面等待用户登录。完整站点研究按下表分别记录。详细日期、制品哈希、安装、真实模型调用和限制见 [验证记录](verification.md)。
 
 ## 浏览器与站点身份
 
@@ -45,11 +45,11 @@
 
 | 要求 | 当前实现与证据 | 验收状态 |
 |---|---|---|
-| 随包 Node／Pi、版本独立、双架构 | `prepare-agent-runtime.sh`；实际 v0.2.61 制品逐个检查原生文件，Runtime 0.1.7、Pi 1.5.0；本机 ARM 与 CI Intel 原生健康检查 | 已通过；macOS 28 实机运行仍未验证 |
+| 随包 Node／Pi、版本独立、双架构 | `prepare-agent-runtime.sh`；实际 v0.2.62 制品逐个检查原生文件，Runtime 0.1.7、Pi 1.5.0；本机 ARM 与 CI Intel 原生健康检查 | 已通过；macOS 28 实机运行仍未验证 |
 | 每日检查、用户安装、版本与兼容信息 | `AppModel.prepareRuntime`、每小时到期检查循环、Runtime 设置 | 已实现；实际界面更新有记录 |
 | 发布哈希、Developer ID、票据、架构、系统／应用／协议验证 | `AgentRuntimeManifest`、Verifier、Installer；损坏、错误版本、未公证及能力缺失回归 | 已实现并有实际制品验证 |
 | 新目录健康检查、原子切换、空闲启用、上一版／启动失败回退 | Runtime 安装、回退、取消、故障恢复回归；真实设置安装回退记录 | 已通过 |
-| 签名公证应用 DMG、Widget 和独立 Runtime；Intel CI | v0.2.61 应用及 v0.2.60 发布的 Runtime 0.1.7 镜像哈希与发布资产一致；CI 两份镜像公证、安装回退、未公证拒绝、Intel 和发布成功 | 已通过 |
+| 签名公证应用 DMG、Widget 和独立 Runtime；Intel CI | v0.2.62 应用及 v0.2.60 发布的 Runtime 0.1.7 镜像哈希与发布资产一致；CI 两份镜像公证、安装回退、未公证拒绝、Intel 和发布成功 | 已通过 |
 
 ## 真实站点与已确认边界
 
