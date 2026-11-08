@@ -33,7 +33,7 @@
 | Brave／Tavily 与百度／Bing／Google 网页搜索 | `ResearchSearch`、匿名 API 会话、结果标准化、时间／站点筛选测试；Brave 新闻端点及 Tavily news 模式；密钥缺失时网页回退路由测试；Bing 实际结果打开记录 | 网页／新闻 API 模拟及部分网页实际通过；API 真实读取依赖服务凭据 |
 | 公开匿名正文、分段、当前热点、证据登记与材料级别 | `PublicArticle`、`ResearchEvidence`、Broker；公网地址、分页、跨对话隔离回归 | 已实现并有回归 |
 | 引用 ID、来源、获取时间、连续研究证据 | 事件中心来源按钮、证据账本；逐回答保存证据范围，停止、重试及实际 Pi 工具回归；v0.2.45 实际安装后生成有效引用 | 引用展示实际通过；跨轮未知编号隔离由自动回归验证 |
-| MCP Streamable HTTP／stdio、独立配置、工具启用与授权 | `mcp-client.mjs`、设置与 Keychain；环境隔离、跨站重定向、取消、原生确认测试；正式版客户端实际调用 Context7 与官方参考服务器；v0.2.54 在 Atlas 中由模拟模型经过 Pi、授权卡调用官方 stdio 服务 | 两种传输的外部服务互通通过；界面允许调用返回 Echo，下一轮重新授权并可拒绝；真实模型调用 MCP 仍需环境验收 |
+| MCP Streamable HTTP／stdio、独立配置、工具启用与授权 | `mcp-client.mjs`、设置与 Keychain；环境隔离、跨站重定向、取消、原生确认测试；正式版客户端实际调用 Context7 与官方参考服务器；v0.2.54 在 Atlas 中由模拟模型经过 Pi、授权卡调用官方 stdio 服务，另由真实模型经过授权卡调用 Context7 HTTP 服务 | 两种传输的外部服务互通通过；stdio 界面允许调用返回 Echo，下一轮重新授权并可拒绝；真实模型 HTTP 调用与连续追问通过 |
 | 分类、摘要、主题全部走 Pi | `AppModel`、`AgentAIProvider`，自动分析与主题公平轮询回归；自动摘要可选匿名读取最多 3 篇原文 | 已实现；原文摘要通过模拟模型、实际 Pi 子进程及数据库回归 |
 | 前后台各一个任务、AI 两个并行加载、同标签串行 | `AgentTaskCoordinator`、Broker `busyTabs`、研究加载额度及取消回归 | 已实现并有回归 |
 | 12 次模型请求、30 次工具、180 秒，授权时暂停计时 | `runtime.mjs`，三协议请求预算、最后回答、授权等待和取消测试 | 已实现并有回归 |
