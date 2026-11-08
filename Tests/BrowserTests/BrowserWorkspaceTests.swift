@@ -49,6 +49,24 @@ final class BrowserWorkspaceTests: XCTestCase {
         return try JSONDecoder().decode(AgentStreamEvent.ToolRequest.self, from: JSONSerialization.data(withJSONObject: value))
     }
 
+    private func waitForAudio(in tab: BrowserWorkspace.Tab, file: StaticString = #filePath, line: UInt = #line) async throws {
+        do { try await waitUntil("Expected audio playback") { tab.hasAudioPlayback } }
+        catch {
+            let state = try? await tab.webView.evaluateJavaScript("JSON.stringify({muted:window.player?.muted,paused:window.player?.paused,ready:window.player?.readyState,error:window.playError,context:window.context?.state})")
+            XCTFail("Audio did not become active: \(state ?? "unavailable")", file: file, line: line)
+            throw error
+        }
+    }
+
+    private func mediaWindow(_ workspace: BrowserWorkspace) -> BrowserWindow {
+        let window = BrowserWindow(contentRect: CGRect(x: 80, y: 80, width: 1000, height: 700),
+                                   styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace))
+        window.makeKeyAndOrderFront(nil)
+        return window
+    }
+
     func testInitialPageStyleFollowsViewportOrientation() {
         XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 450, height: 750)), .mobile)
         XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 1100, height: 1300)), .mobile)
@@ -57,6 +75,105 @@ final class BrowserWorkspaceTests: XCTestCase {
         let workspace = BrowserWorkspace(dataStore: .nonPersistent())
         workspace.updateViewportSize(.zero)
         XCTAssertEqual(workspace.viewportSize, CGSize(width: 1024, height: 768))
+    }
+
+    func testAudioStartsMutedAndTogglePreservesPlaybackAndTabIsolation() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let window = mediaWindow(workspace)
+        let tab = workspace.newTab(url: base.appendingPathComponent("media"))
+        let other = workspace.newTab()
+        defer { workspace.close(tab); workspace.close(other); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        let initiallyMuted = try await tab.webView.evaluateJavaScript("document.querySelector('audio').muted") as? Bool
+        XCTAssertEqual(initiallyMuted, true)
+        _ = try await tab.webView.evaluateJavaScript("player.play().catch(e=>window.playError=String(e));player.muted=false;true")
+        try await waitForAudio(in: tab)
+        let revision = tab.navigationRevision
+        let before = try await tab.webView.evaluateJavaScript("player.currentTime") as? Double
+        let forcedMute = try await tab.webView.evaluateJavaScript("player.muted") as? Bool
+        XCTAssertEqual(forcedMute, true, "The site cannot override the tab's mute choice")
+        workspace.toggleMuted(in: tab)
+        try await waitUntil { !tab.isMuted }
+        // Await a command queued after the native audio update.
+        let unmuted = try await tab.webView.evaluateJavaScript("player.muted") as? Bool
+        XCTAssertEqual(unmuted, false)
+        let paused = try await tab.webView.evaluateJavaScript("player.paused") as? Bool
+        XCTAssertEqual(paused, false)
+        let after = try await tab.webView.evaluateJavaScript("player.currentTime") as? Double
+        XCTAssertGreaterThanOrEqual(after ?? 0, before ?? 0)
+        XCTAssertEqual(tab.navigationRevision, revision)
+        XCTAssertTrue(other.isMuted)
+        _ = try await tab.webView.evaluateJavaScript("player.muted=true")
+        try await waitUntil { !tab.hasAudioPlayback }
+        workspace.toggleMuted(in: tab)
+        workspace.toggleMuted(in: tab)
+        let siteMute = try await tab.webView.evaluateJavaScript("player.muted") as? Bool
+        XCTAssertEqual(siteMute, true, "Unmuting the tab preserves the site's own mute setting")
+        _ = try await tab.webView.evaluateJavaScript("player.muted=false;player.pause()")
+        try await waitUntil { !tab.hasAudioPlayback }
+    }
+
+    func testAudioChoiceSurvivesNavigationAndNewAgentTabsStartMuted() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let window = mediaWindow(workspace)
+        let tab = workspace.newTab(url: base.appendingPathComponent("media"))
+        let agent = workspace.newTab(owner: .agent, taskID: "audio", url: base.appendingPathComponent("media"), select: false)
+        defer { workspace.close(tab); workspace.close(agent); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 && agent.finishedRevision > 0 }
+        workspace.toggleMuted(in: tab)
+        workspace.load(base.appendingPathComponent("media"), in: tab)
+        try await waitUntil { tab.finishedRevision > 1 && !tab.webView.isLoading }
+        let unmuted = try await tab.webView.evaluateJavaScript("player.muted") as? Bool
+        XCTAssertEqual(unmuted, false)
+        XCTAssertTrue(agent.isMuted)
+        _ = try await agent.webView.evaluateJavaScript("player.play().catch(e=>window.playError=String(e));true")
+        try await waitForAudio(in: agent)
+        workspace.toggleMuted(in: agent)
+        XCTAssertFalse(agent.userTookControl, "Changing sound output leaves research authority unchanged")
+        XCTAssertEqual(workspace.selectedID, tab.id)
+        workspace.load(base.appendingPathComponent("article"), in: tab)
+        try await waitUntil { tab.finishedRevision > 2 && !tab.webView.isLoading }
+        XCTAssertFalse(tab.hasAudioPlayback)
+    }
+
+    func testAudioGateCoversWebAudioDynamicPlayersAndCrossOriginFrames() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let window = mediaWindow(workspace)
+        let tab = workspace.newTab(url: base.appendingPathComponent("media"))
+        defer { workspace.close(tab); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 }
+        _ = try await tab.webView.evaluateJavaScript("startTone().catch(e=>window.playError=String(e));true")
+        try await waitForAudio(in: tab)
+        let mutedOutput = try await tab.webView.evaluateJavaScript("createdGains.at(-1).gain.value") as? Double
+        XCTAssertEqual(mutedOutput, 0, "The final Web Audio output is silent while the source keeps running")
+        workspace.toggleMuted(in: tab)
+        let enabledOutput = try await tab.webView.callAsyncJavaScript("await new Promise(resolve=>setTimeout(resolve,100));return createdGains.at(-1).gain.value", arguments: [:], in: nil, contentWorld: .page) as? Double
+        XCTAssertEqual(enabledOutput, 1)
+        workspace.toggleMuted(in: tab)
+        _ = try await tab.webView.evaluateJavaScript("oscillator.stop();context.close();true")
+        try await waitUntil { !tab.hasAudioPlayback }
+        _ = try await tab.webView.callAsyncJavaScript("""
+            const root=document.body.appendChild(document.createElement('div')).attachShadow({mode:'closed'});
+            const audio=new Audio('/tone.wav');root.append(audio);window.shadowAudio=audio;await audio.play();
+            """, arguments: [:], in: nil, contentWorld: .page)
+        try await waitUntil { tab.hasAudioPlayback }
+        let dynamicMute = try await tab.webView.evaluateJavaScript("shadowAudio.muted") as? Bool
+        XCTAssertEqual(dynamicMute, true)
+        _ = try await tab.webView.evaluateJavaScript("shadowAudio.pause()")
+        try await waitUntil { !tab.hasAudioPlayback }
+        workspace.load(base.appendingPathComponent("media-frame"), in: tab)
+        try await waitUntil("Cross-origin frame audio should be reported by the owning tab") { tab.finishedRevision > 1 && tab.hasAudioPlayback }
+        workspace.toggleMuted(in: tab)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(tab.isMuted)
+        _ = try await tab.webView.evaluateJavaScript("document.querySelector('iframe').remove()")
+        try await waitUntil("Removed frames must clear their audio indicator") { !tab.hasAudioPlayback }
     }
 
     func testMobileRequestAndViewportPreserveSiteAuthoredSettings() async throws {
@@ -152,6 +269,23 @@ final class BrowserWorkspaceTests: XCTestCase {
         XCTAssertEqual(tab.pageStyle, .mobile)
         XCTAssertEqual(tab.navigationRevision, 0)
         XCTAssertEqual(workspace.newTab().pageStyle, .desktop)
+    }
+
+    func testFirstStoryUsesInitialPortraitLayout() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), waitsForInitialViewport: true)
+        let window = BrowserWindow(contentRect: CGRect(x: 0, y: 0, width: 500, height: 800),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: BrowserWorkspaceView(workspace: workspace).onAppear {
+            workspace.openStory(base.appendingPathComponent("device-article"))
+        })
+        defer { for tab in workspace.tabs { workspace.close(tab) }; window.close() }
+        try await waitUntil { workspace.selected?.finishedRevision ?? 0 > 0 }
+        XCTAssertEqual(workspace.selected?.pageStyle, .mobile)
+        let header = try await workspace.selected?.webView.evaluateJavaScript("window.receivedAgent") as? String
+        XCTAssertEqual(header, BrowserPageStyle.mobile.userAgent)
     }
 
     func testSiteInformationUsesCompletedSecureLoadAndSeparatesFailureFromHTTPSAddress() {

@@ -3,6 +3,34 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/tone.wav") {
+    const rate = 8000, samples = rate * 2;
+    const wave = Buffer.alloc(44 + samples * 2);
+    wave.write("RIFF", 0); wave.writeUInt32LE(wave.length - 8, 4); wave.write("WAVEfmt ", 8);
+    wave.writeUInt32LE(16, 16); wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22);
+    wave.writeUInt32LE(rate, 24); wave.writeUInt32LE(rate * 2, 28); wave.writeUInt16LE(2, 32);
+    wave.writeUInt16LE(16, 34); wave.write("data", 36); wave.writeUInt32LE(samples * 2, 40);
+    for (let n = 0; n < samples; n++) wave.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * n / rate) * 32), 44 + n * 2);
+    response.writeHead(200, { "content-type": "audio/wav", "content-length": wave.length }).end(wave);
+    return;
+  }
+  if (url.pathname === "/media") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>网页声音验收</title>
+      <style>body{margin:28px;font:18px -apple-system;line-height:1.7;background:#f5f3ed;color:#28323e}h1{font-size:28px}button{font:inherit}</style></head><body>
+      <h1>网页声音验收</h1><p>播放器继续运行，工具栏单独控制此标签的声音。</p>
+      <audio id="player" src="/tone.wav" loop controls></audio><p id="state">等待播放</p>
+      <script>const player = document.querySelector('audio'); player.addEventListener('playing', () => document.querySelector('#state').textContent='音频正在播放');
+      window.startTone = async () => { window.context = new AudioContext(); const createGain=context.createGain.bind(context);window.createdGains=[];
+        context.createGain=() => {const node=createGain();createdGains.push(node);return node;};window.oscillator = context.createOscillator(); oscillator.frequency.value=440;
+        const level=context.createGain();level.gain.value=0.001;oscillator.connect(level);level.connect(context.destination);oscillator.start();await context.resume(); };
+      ${url.searchParams.has("autoplay") ? "player.autoplay=true;player.play().catch(()=>{});" : ""}</script></body></html>`);
+    return;
+  }
+  if (url.pathname === "/media-frame") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><body><h1>内嵌播放器</h1>
+      <iframe src="http://localhost:${server.address().port}/media?autoplay=1"></iframe></body></html>`);
+    return;
+  }
   if (url.pathname === "/device-article") {
     const agent = JSON.stringify(request.headers["user-agent"] || "").replaceAll("<", "\\u003c");
     const cookie = JSON.stringify(request.headers.cookie || "").replaceAll("<", "\\u003c");

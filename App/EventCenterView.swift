@@ -22,7 +22,7 @@ struct EventCenterView: View {
 
     init(model: TrendingAppModel) {
         self.model = model
-        let workspace = BrowserWorkspace()
+        let workspace = BrowserWorkspace(waitsForInitialViewport: true)
         _browser = StateObject(wrappedValue: workspace)
         _browserTools = StateObject(wrappedValue: BrowserToolBroker(workspace: workspace, currentSnapshot: { [weak model] in model?.snapshot }))
     }

@@ -98,6 +98,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         let owner: Owner
         let agentTaskID: String?
         let webView: WKWebView
+        let audio: BrowserAudioController
         @Published var title = "新标签"
         @Published var address = ""
         @Published var loading = false
@@ -108,6 +109,8 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         @Published var showingReader = false
         @Published var extractingReader = false
         @Published var userTookControl = false
+        @Published fileprivate(set) var isMuted = true
+        @Published fileprivate(set) var hasAudioPlayback = false
         @Published fileprivate(set) var pageStyle: BrowserPageStyle = .desktop
         fileprivate var preferredPageStyle: BrowserPageStyle?
         var needsUserAction = false
@@ -123,11 +126,14 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         var activeNavigation: WKNavigation?
         var researchNavigationPending = false
         var researchLoadLimited = false
+        var loadRequestRevision = 0
 
         init(owner: Owner, agentTaskID: String?, webView: WKWebView) {
             self.owner = owner
             self.agentTaskID = agentTaskID
             self.webView = webView
+            audio = BrowserAudioController(webView: webView)
+            audio.onPlaybackChange = { [weak self] playing in self?.hasAudioPlayback = playing }
         }
     }
 
@@ -151,9 +157,14 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     private let researchURLAllowed: (URL) -> Bool
     private var userInputMonitor: LocalEventMonitor?
     private(set) var viewportSize = CGSize(width: 1024, height: 768)
+    private let waitsForInitialViewport: Bool
+    private var hasInitialViewport = false
+    private var pendingInitialLoads: [UUID: (url: URL, revision: Int)] = [:]
 
-    init(dataStore: WKWebsiteDataStore? = nil, researchURLAllowed: @escaping (URL) -> Bool = ResearchNavigationPolicy.allows) {
+    init(dataStore: WKWebsiteDataStore? = nil, waitsForInitialViewport: Bool = false,
+         researchURLAllowed: @escaping (URL) -> Bool = ResearchNavigationPolicy.allows) {
         self.dataStore = dataStore ?? Self.persistentDataStore()
+        self.waitsForInitialViewport = waitsForInitialViewport
         self.researchURLAllowed = researchURLAllowed
         super.init()
         if let token = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel, .keyDown], handler: { [weak self] event in
@@ -205,6 +216,20 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     func updateViewportSize(_ size: CGSize) {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return }
         viewportSize = size
+        guard !hasInitialViewport else { return }
+        hasInitialViewport = true
+        let pending = pendingInitialLoads
+        pendingInitialLoads.removeAll()
+        // Begin the initial request only once the reading pane has real bounds.
+        // Dispatch out of AppKit layout before publishing tab state to SwiftUI.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for (id, request) in pending {
+                if let tab = tabs.first(where: { $0.id == id }), tab.loadRequestRevision == request.revision {
+                    load(request.url, in: tab)
+                }
+            }
+        }
     }
 
     private func preparePageStyle(in tab: Tab) {
@@ -218,6 +243,12 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         tab.preferredPageStyle = tab.pageStyle.opposite
         preparePageStyle(in: tab)
         if tab.webView.url != nil { tab.webView.reload() }
+    }
+
+    func toggleMuted(in tab: Tab) {
+        guard tabs.contains(where: { $0 === tab }) else { return }
+        tab.isMuted.toggle()
+        tab.audio.setMuted(tab.isMuted)
     }
 
     @discardableResult
@@ -238,6 +269,12 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     private func addTab(owner: Owner, taskID: String?, configuration: WKWebViewConfiguration, url: URL?, select: Bool) -> Tab {
+        // Popup configurations may share the parent's controller. Give every tab
+        // its own sound handler and default, while preserving other user scripts.
+        let scripts = configuration.userContentController.userScripts.filter { !$0.source.hasPrefix(BrowserAudioController.scriptMarker) }
+        configuration.userContentController = WKUserContentController()
+        for script in scripts { configuration.userContentController.addUserScript(script) }
+        configuration.mediaTypesRequiringUserActionForPlayback = []
         // Background research starts with the same viewport as the reading pane.
         let initialFrame = CGRect(origin: .zero, size: viewportSize)
         let webView = WorkspaceWebView(frame: initialFrame, configuration: configuration)
@@ -281,12 +318,18 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
             tab.error = "请输入 HTTP 或 HTTPS 地址。"
             return
         }
+        tab.loadRequestRevision += 1
+        if waitsForInitialViewport && !hasInitialViewport {
+            pendingInitialLoads[tab.id] = (url, tab.loadRequestRevision)
+            return
+        }
         tab.error = nil
         preparePageStyle(in: tab)
         tab.webView.load(URLRequest(url: url))
     }
 
     func close(_ tab: Tab) {
+        pendingInitialLoads.removeValue(forKey: tab.id)
         (tab.webView as? WorkspaceWebView)?.permitsKeyboardFocus = false
         if let window = tab.webView.window, let responder = window.firstResponder as? NSView,
            responder === tab.webView || responder.isDescendant(of: tab.webView) { window.makeFirstResponder(nil) }
@@ -294,6 +337,9 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         researchLoads.remove(tab.id)
         tab.researchNavigationPending = false
         tab.webView.stopLoading()
+        tab.audio.setMuted(true)
+        tab.webView.pauseAllMediaPlayback(completionHandler: nil)
+        tab.audio.navigationStarted()
         tabs.removeAll { $0.id == tab.id }
         authorityChanges.send()
         if currentStoryTabID == tab.id { currentStoryTabID = nil }
@@ -365,6 +411,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         tab.researchNavigationPending = false
         tab.researchLoadLimited = false
         tab.navigationRevision += 1
+        tab.audio.navigationStarted()
         authorityChanges.send()
         tab.needsUserAction = false
         tab.blockedAction = nil
@@ -438,6 +485,7 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
         tab.researchNavigationPending = false
         tab.navigationErrorCode = WKError.webContentProcessTerminated.rawValue
         tab.navigationErrorDomain = WKError.errorDomain
+        tab.audio.navigationStarted()
         tab.error = "页面进程已停止，请重新加载。"
     }
 
@@ -606,6 +654,7 @@ private struct BrowserTabContent: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+                .zIndex(1)
             Divider()
             if let error = tab.error {
                 HStack { Text(error).font(.caption); Spacer(); Button("重试") { workspace.noteUserInteraction(in: tab); tab.webView.reload() } }
@@ -665,6 +714,7 @@ private struct BrowserTabContent: View {
                 .help("当前为\(tab.pageStyle.title)，切换至\(tab.pageStyle.opposite.title)并刷新")
                 .accessibilityLabel("切换至\(tab.pageStyle.opposite.title)并刷新")
                 .accessibilityValue(tab.pageStyle.title)
+            audioButton
             Button {
                 workspace.noteUserInteraction(in: tab)
                 if tab.showingReader { tab.showingReader = false }
@@ -690,6 +740,34 @@ private struct BrowserTabContent: View {
         .onChange(of: tab.id) { _, _ in address = tab.address; showingSiteInformation = false }
         .onChange(of: tab.webView.url?.host) { _, _ in showingSiteInformation = false }
         .onChange(of: tab.address, initial: true) { _, value in address = value }
+    }
+
+    private var audioButton: some View {
+        Button { workspace.toggleMuted(in: tab) } label: {
+            Image(systemName: tab.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .foregroundStyle(tab.hasAudioPlayback ? AppTheme.accent : .secondary)
+        }
+        .keyboardShortcut("m", modifiers: [.command, .option])
+        .help(tab.isMuted ? "开启此标签的声音" : "静音此标签")
+        .accessibilityLabel(tab.isMuted ? "开启网页声音" : "静音网页")
+        .accessibilityValue(tab.isMuted ? "已静音" : "声音已开启")
+        .overlay(alignment: .topTrailing) {
+            if tab.isMuted && tab.hasAudioPlayback {
+                Button { workspace.toggleMuted(in: tab) } label: {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Rectangle().fill(AppTheme.actionTint).frame(width: 8, height: 8).rotationEffect(.degrees(45)).padding(.trailing, 5).offset(y: 4)
+                        Text("网页有声音，点击开启")
+                            .font(.caption).foregroundStyle(.white).fixedSize()
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(AppTheme.actionTint, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("网页有声音，点击开启")
+                .offset(y: 23)
+            }
+        }
     }
 }
 
