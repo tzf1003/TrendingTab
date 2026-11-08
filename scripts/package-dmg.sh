@@ -238,27 +238,8 @@ if [[ "$signing_mode" == "developer-id" ]]; then
 
   if [[ -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
     echo "Submitting DMG for notarization."
-    notary_result="$output_dir/notarization.json"
-    notary_exit=0
-    xcrun notarytool submit \
-      "$dmg" \
-      --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
-      --wait \
-      --output-format json > "$notary_result" || notary_exit=$?
-    cat "$notary_result"
-    notary_status="$(plutil -extract status raw -o - "$notary_result" 2>/dev/null || true)"
-    if (( notary_exit != 0 )) || [[ "$notary_status" != "Accepted" ]]; then
-      submission_id="$(plutil -extract id raw -o - "$notary_result" 2>/dev/null || true)"
-      if [[ -n "$submission_id" ]]; then
-        notary_log="$output_dir/notarization-log.json"
-        if xcrun notarytool log "$submission_id" \
-            --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" "$notary_log"; then
-          cat "$notary_log"
-        fi
-      fi
-      echo "Apple notarization failed: ${notary_status:-submission error}." >&2
-      exit 1
-    fi
+    python3 "$root/scripts/notarize-with-retry.py" "$dmg" \
+      --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --result "$output_dir/notarization.json"
     zsh "$root/scripts/staple-with-retry.sh" "$dmg"
     zsh scripts/staple-with-retry.sh "$dmg" validate
   fi

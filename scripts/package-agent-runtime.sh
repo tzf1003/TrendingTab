@@ -87,7 +87,8 @@ fi
 if [[ "$signing_mode" == developer-id && -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
   archive="$staging/.runtime-notary.zip"
   ditto -c -k --keepParent "$app" "$archive"
-  xcrun notarytool submit "$archive" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait
+  python3 "$root/scripts/notarize-with-retry.py" "$archive" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+    --result "$output_dir/runtime-app-notarization.json"
   rm -f "$archive"
   zsh "$root/scripts/staple-with-retry.sh" "$app"
   zsh "$root/scripts/staple-with-retry.sh" "$app" validate
@@ -106,7 +107,8 @@ if [[ "$signing_mode" == developer-id ]]; then
   fi
 fi
 if [[ "$signing_mode" == developer-id && -n "${NOTARY_KEYCHAIN_PROFILE:-}" ]]; then
-  xcrun notarytool submit "$image" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" --wait
+  python3 "$root/scripts/notarize-with-retry.py" "$image" --keychain-profile "$NOTARY_KEYCHAIN_PROFILE" \
+    --result "$output_dir/runtime-image-notarization.json"
   zsh "$root/scripts/staple-with-retry.sh" "$image"
   zsh "$root/scripts/staple-with-retry.sh" "$image" validate
 fi
