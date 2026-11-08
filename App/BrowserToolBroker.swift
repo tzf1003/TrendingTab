@@ -1362,12 +1362,23 @@ final class BrowserToolBroker: ObservableObject {
         }
         let script = """
         (() => {
-            const results = Array.from(document.querySelectorAll('\(selectors.0)')).slice(0, 10).map(row => {
-                const link = row.querySelector('\(selectors.1)');
-                return {title: (link?.innerText || '').slice(0, 300), url: link?.href || '',
-                    snippet: (row.querySelector('\(selectors.2)')?.innerText || '').slice(0, 700), published: null};
-            }).filter(row => row.title && row.url);
             const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
+            const results = [], seen = new Set();
+            for (const link of document.querySelectorAll('\(selectors.0) \(selectors.1)')) {
+                if (!visible(link)) continue;
+                const title = (link.querySelector('h3')?.innerText || link.innerText || '').trim().slice(0, 300);
+                let address;
+                try { address = new URL(link.href); } catch { continue; }
+                if (!title || !['http:', 'https:'].includes(address.protocol) || address.username || address.password) continue;
+                address.hash = '';
+                if (seen.has(address.href)) continue;
+                seen.add(address.href);
+                const row = link.closest('\(selectors.0)');
+                const snippet = row?.querySelector('\(selectors.2)');
+                results.push({title, url: link.href,
+                    snippet: snippet && visible(snippet) ? snippet.innerText.slice(0, 700) : '', published: null});
+                if (results.length === 10) break;
+            }
             const challenge = Array.from(document.querySelectorAll('input[type="password"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="turnstile"], [data-sitekey]')).some(visible);
             const body = document.body?.innerText || '';
             const qrLogin = /扫码登录|二维码登录|扫描二维码登录/.test(body) && Array.from(document.querySelectorAll('img, canvas')).some(visible);

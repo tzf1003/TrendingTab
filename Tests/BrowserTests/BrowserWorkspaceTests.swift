@@ -18,7 +18,9 @@ final class BrowserWorkspaceTests: XCTestCase {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["node", URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("fixture-server.mjs").path]
+        let script = Bundle(for: Self.self).url(forResource: "fixture-server", withExtension: "mjs")
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("fixture-server.mjs")
+        process.arguments = ["node", script.path]
         process.standardOutput = output
         try process.run()
         var line = Data()
@@ -1754,6 +1756,29 @@ final class BrowserWorkspaceTests: XCTestCase {
             if expected == "wait_for_login" { XCTAssertTrue(result.contains(tab.id.uuidString), result) }
         }
         XCTAssertEqual(broker.evidence.records.count, 1)
+    }
+
+    func testWebSearchFiltersContainersBeforeLimitingAndKeepsUniqueVisibleResults() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        for engine in ["google", "baidu", "bing"] {
+            let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+            let broker = BrowserToolBroker(workspace: workspace)
+            let user = workspace.newTab()
+            let url = base.appendingPathComponent("search-containers").appending(queryItems: [.init(name: "engine", value: engine)])
+            _ = try await broker.execute(request(.openAIPage, ["url": url.absoluteString]),
+                                         runID: engine, itemID: engine, taskTitle: "搜索回归")
+            let tab = try XCTUnwrap(workspace.tabs.last { $0.owner == .agent })
+            let result = try await broker.extractSearchResults(tab, engine: engine, runID: engine, itemID: engine)
+            let records = broker.evidence.records
+            XCTAssertEqual(records.count, 10, engine + ": " + result)
+            XCTAssertEqual(records.map(\.title), (1...10).map { "搜索报道\($0)" }, engine)
+            XCTAssertEqual(Set(records.map(\.url)).count, 10, engine)
+            XCTAssertEqual(records.map(\.excerpt), (1...10).map { "搜索报道\($0)\n报道摘要\($0)" }, engine)
+            XCTAssertFalse(result.contains("搜索报道hidden"), result)
+            XCTAssertTrue(records.allSatisfy { $0.level == .searchSnippet }, engine)
+            XCTAssertEqual(workspace.selectedID, user.id)
+        }
     }
 
     func testCurrentHotTopicsOnlyReturnsFreshRowsAndScopesReferences() async throws {

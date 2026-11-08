@@ -217,6 +217,22 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end('<!doctype html><html><body><ol><li class="b_algo"><h2><a href="/article">测试搜索结果</a></h2><div class="b_caption"><p>搜索摘要</p></div></li></ol></body></html>');
     return;
   }
+  if (url.pathname === "/search-containers") {
+    const engine = url.searchParams.get("engine");
+    const result = (id, hidden = false) => {
+      const title = `搜索报道${id}`;
+      const style = hidden ? ' style="display:none"' : '';
+      if (engine === "google") return `<div class="MjjYud"${style}><a href="/article?id=${id}"><h3>${title}</h3></a><div class="VwiC3b">报道摘要${id}</div></div>`;
+      if (engine === "baidu") return `<div class="result"${style}><h3><a href="/article?id=${id}">${title}</a></h3><div class="c-abstract">报道摘要${id}</div></div>`;
+      return `<li class="b_algo"${style}><h2><a href="/article?id=${id}">${title}</a></h2><div class="b_caption"><p>报道摘要${id}</p></div></li>`;
+    };
+    const empty = engine === "google" ? '<div class="MjjYud">搜索布局</div>' : engine === "baidu" ? '<div class="result">搜索布局</div>' : '<li class="b_algo">搜索布局</li>';
+    const results = Array.from({ length: 12 }, (_, i) => result(i + 1)).join("");
+    const content = empty.repeat(12) + result("hidden", true) + result(1) + results;
+    const body = engine === "google" ? `<div id="search"><div class="MjjYud">${content}</div></div>` : engine === "baidu" ? `<div id="content_left">${content}</div>` : `<ol>${content}</ol>`;
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><body>${body}</body></html>`);
+    return;
+  }
   if (url.pathname === "/baidu-safety") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end('<!doctype html><html><head><title>百度安全验证</title></head><body>网络不给力，请稍后重试</body></html>');
     return;
