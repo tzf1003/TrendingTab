@@ -29,11 +29,7 @@ struct TrendingTabApp: App {
         #endif
         let resources = Bundle.main.resourceURL ?? Bundle.main.bundleURL.appendingPathComponent("Contents/Resources")
         let root = resources.appendingPathComponent("AgentRuntime", isDirectory: true)
-        #if arch(arm64)
-        let executable = root.appendingPathComponent("bin/node-arm64")
-        #else
-        let executable = root.appendingPathComponent("bin/node-x86_64")
-        #endif
+        let executable = root.appendingPathComponent("bin/node")
         let script = root.appendingPathComponent("runtime.mjs")
         let bridge = AgentBridge(executableURL: executable, scriptURL: script)
         guard let package = try? Data(contentsOf: root.appendingPathComponent("package.json")),

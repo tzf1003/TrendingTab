@@ -45,7 +45,7 @@ app="$staging/AgentRuntime.app"
 mkdir -p "$app/Contents/MacOS"
 zsh "$root/scripts/prepare-agent-runtime.sh" "$app/Contents/Resources"
 runtime="$app/Contents/Resources"
-lipo -create "$runtime/bin/node-arm64" "$runtime/bin/node-x86_64" -output "$app/Contents/MacOS/node"
+mv "$runtime/bin/node" "$app/Contents/MacOS/node"
 rm -rf "$runtime/bin"
 python3 - "$app/Contents/Info.plist" "$version" "$pi_version" <<'PY'
 import plistlib
@@ -75,6 +75,7 @@ done
 codesign --force --options runtime --sign "$identity" "${timestamp[@]}" \
   --entitlements "$root/scripts/AgentRuntime.entitlements" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
+python3 "$root/scripts/verify-native-architectures.py" "$app"
 lipo "$app/Contents/MacOS/node" -verify_arch arm64
 lipo "$app/Contents/MacOS/node" -verify_arch x86_64
 "$app/Contents/MacOS/node" "$runtime/runtime-health.mjs" | python3 -c \

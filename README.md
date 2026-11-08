@@ -39,6 +39,8 @@ rtk env SIGNING_MODE=ad-hoc zsh scripts/package-dmg.sh
 
 `main` 分支的 CI 会运行测试、构建同时支持 Apple Silicon 与 Intel 的 DMG，把 DMG 和 SHA-256 作为 Actions Artifact 保存，并发布到 GitHub Release。完整签名和公证配置见 [发布与签名](docs/release.md)。
 
+应用、Widget、随包 Node 和 Pi 原生插件均采用 arm64／x86_64 Universal 架构；Apple Silicon 默认使用原生 ARM。打包和 CI 会检查每个 Mach-O 文件，Intel 执行由 Intel runner 验证。macOS 28 的实际兼容性需在对应系统发布后另行验收。
+
 ## 文档
 
 - [架构与数据模型](docs/architecture.md)

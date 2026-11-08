@@ -49,5 +49,6 @@ cp -R "$root/AgentRuntime/LICENSES" "$staging/LICENSES"
 # Native modules for other operating systems cannot run on macOS and are not shipped.
 rm -rf "$staging/node_modules/@earendil-works/pi-tui/native/linux" \
        "$staging/node_modules/@earendil-works/pi-tui/native/win32"
+zsh "$root/scripts/universalize-agent-runtime.sh" "$staging"
 mv "$staging" "$destination"
 trap - EXIT

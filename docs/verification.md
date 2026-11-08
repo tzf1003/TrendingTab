@@ -2,6 +2,20 @@
 
 ## 2026-11-08
 
+### 原生架构与 Rosetta 提醒
+
+用户报告系统提示包内某个组件无法在 macOS 28 打开。[Apple 支持说明](https://support.apple.com/zh-cn/102527)将此提示归于 Intel App 或组件通过 Rosetta 执行。检查主账号安装为 v0.2.48，主应用与 Widget 是 Universal，AI 子进程路径是 ARM Node；包内还分别存放 ARM／Intel Node 和 Pi 原生插件。此前分发验收曾在本机主动执行 Intel Node，因此该验证也可能触发提示；尚未获得将本条通知归因到某次启动的系统记录。
+
+Runtime 0.1.7 将两份 Node 合并为单一 Universal 可执行文件，Pi 原生插件在上游的两种架构查找路径中均提供 Universal 文件。主应用与独立组件共用相同的准备流程；打包和 CI 逐个检查 Mach-O，并在真实 Intel runner 检查 Intel 执行。本机后续验证只执行 ARM 路径。
+
+本地架构回归使用实际 clang／lipo，确认旧的独立薄架构文件被拦截、转换后的 Node／插件通过、额外混入的 Intel-only 插件导致失败。真实准备流程生成的三份 Mach-O 均包含 arm64／x86_64，ARM Node 加载 Pi 原生插件及协议／流式／工具健康检查通过；Pi Runtime 的模型协议、取消、多轮和握手回归通过。主应用 Debug 构建通过，Runtime Swift 定向测试 19 项、3 项环境跳过、零失败。签名、公证及正式制品验证待下次构建记录；这些结果不代表已在 macOS 28 运行。
+
+### 实际浏览器操作补充
+
+Atlas 辅助账号升级至正式版 v0.2.56 后，已配置真实模型通过 Pi 执行 `open_ai_page → read_ai_page → scroll_ai_page → read_ai_page`，在自己的澎湃新闻首页标签完成四次工具调用，生成两条页面可见文字引用。该轮共 5 次模型请求、21,773 tokens；用户知乎标签的 URL 保持不变，对话输入框保持焦点。截图为 Atlas `runs/1794114648166577000-capture.png`，既有系统通知遮挡部分右栏，过程和用量另由 AX 读回。这是公开首页的浏览操作证据，完整原文、搜索、独立报道比较与连续追问仍按站点清单验收。
+
+此前辅助账号同时有两个 TrendingTab 进程，输入被 Atlas 以 `focus-changed` 拒绝。关闭本任务的两个实例并安装实际 v0.2.56 后，单实例输入成功；独立菜单栏应用的文本框也通过 Atlas 输入检查。此结果证明恢复后的输入可用，不能唯一归因于重复实例。
+
 正式版 [v0.2.56](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.56) 对应构建提交 `0cf357206186`，[CI 42445121133](https://github.com/tzf1003/TrendingTab/actions/runs/42445121133) 的构建、Intel 原生 Runtime 检查及发布全部成功。CI Swift 115 项、4 项环境跳过；浏览器 77 项、2 项真实网络跳过，零意外失败；既有网页后台请求仍按预期失败记录。两个 DMG 签名公证、Runtime 安装回退与未公证镜像拒绝均通过。
 
 实际应用 DMG SHA-256 为 `0c4bd499444e9e3470c5ced00952988e99c33684eb9cef01653220ae57fb54d8`，与 Release digest 及校验文件一致；标签 SHA 与构建提交一致。本机确认镜像完整性、公证票据、Developer ID、App／Widget profile、entitlements、嵌套签名和 arm64／x86_64 架构。随包 Runtime 0.1.6、Pi 1.5.0 在 arm64 和 Rosetta x86_64 下均通过协议、流式及 20 项工具的健康检查。主应用公证票据附在 DMG；独立 Runtime 同时验证组件本身与镜像票据。本机 Gatekeeper 全局关闭，评估返回 `Notarized Developer ID` 并注明安全检查覆盖，启用检查的证据以 CI 为准。

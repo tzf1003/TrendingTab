@@ -45,6 +45,7 @@ jobs:
           set -euo pipefail
           zsh scripts/test-staple-retry.sh
           zsh scripts/test-create-dmg-retry.sh
+          zsh scripts/test-runtime-architectures.sh
           [[ "$MARKETING_VERSION" =~ ^[0-9]{1,7}\.[0-9]{1,7}\.[0-9]{1,7}$ ]]
           test "$(node -p 'require("./AgentRuntime/package.json").version')" = "$MARKETING_VERSION"
           names="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate --jq '.[] | select(.draft == false and .prerelease == false) | .assets[]?.name')"
@@ -56,8 +57,8 @@ jobs:
           zsh scripts/prepare-agent-runtime.sh "$runtime"
           cp AgentRuntime/test-runtime.mjs AgentRuntime/test-runtime-metadata.mjs AgentRuntime/test-mcp-client.mjs AgentRuntime/test-mcp-server.mjs "$runtime/"
           architecture="$(uname -m)"
-          (cd "$runtime" && "./bin/node-$architecture" test-runtime.mjs && "./bin/node-$architecture" test-runtime-metadata.mjs && "./bin/node-$architecture" --test test-mcp-client.mjs)
-          TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" swift test
+          (cd "$runtime" && "./bin/node" test-runtime.mjs && "./bin/node" test-runtime-metadata.mjs && "./bin/node" --test test-mcp-client.mjs)
+          TRENDINGTAB_TEST_NODE="$runtime/bin/node" TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" swift test
       - name: Import Developer ID
         env:
           APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
@@ -101,7 +102,7 @@ jobs:
           zsh scripts/staple-with-retry.sh "$dmg" validate
           architecture="$(uname -m)"
           TRENDINGTAB_TEST_NOTARIZED_RUNTIME_DMG="$dmg" \
-          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/runtime-test/bin/node-$architecture" \
+          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/runtime-test/bin/node" \
           TRENDINGTAB_TEST_RUNTIME="$RUNNER_TEMP/runtime-test/runtime.mjs" \
             swift test --filter AgentRuntimeManifestTests/testNotarizedRuntimeInstallAndRollback
           test -f "$SIGNED_UNNOTARIZED_IMAGE"
@@ -151,6 +152,7 @@ jobs:
           codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
           cmp "$GITHUB_WORKSPACE/AgentRuntime/LICENSES/pi-MIT.txt" "$app/Contents/Resources/LICENSES/pi-MIT.txt"
           spctl --assess --type execute "$app"
+          python3 "$GITHUB_WORKSPACE/scripts/verify-native-architectures.py" "$app"
           lipo "$app/Contents/MacOS/node" -verify_arch "$EXPECTED_ARCH"
           "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c 'import json,plistlib,sys; r=json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
 

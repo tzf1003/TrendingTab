@@ -179,10 +179,8 @@ sign_with_retry() {
 for native_module in "$runtime_dir"/node_modules/**/*.node(N); do
   sign_with_retry "$native_module" --force --options runtime --sign "$sign_identity" "${timestamp_args[@]}"
 done
-for node in "$runtime_dir/bin/node-arm64" "$runtime_dir/bin/node-x86_64"; do
-  sign_with_retry "$node" --force --options runtime --sign "$sign_identity" \
-    "${timestamp_args[@]}" --entitlements "$root/scripts/AgentRuntime.entitlements"
-done
+sign_with_retry "$runtime_dir/bin/node" --force --options runtime --sign "$sign_identity" \
+  "${timestamp_args[@]}" --entitlements "$root/scripts/AgentRuntime.entitlements"
 
 sign_with_retry "$widget_bundle" \
   --force \

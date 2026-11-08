@@ -57,19 +57,20 @@ jobs:
           set -euo pipefail
           zsh scripts/test-staple-retry.sh
           zsh scripts/test-create-dmg-retry.sh
+          zsh scripts/test-runtime-architectures.sh
           runtime="$RUNNER_TEMP/agent-runtime-test"
           zsh scripts/prepare-agent-runtime.sh "$runtime"
           cp AgentRuntime/test-runtime.mjs AgentRuntime/test-runtime-metadata.mjs AgentRuntime/test-mcp-client.mjs AgentRuntime/test-mcp-server.mjs "$runtime/"
           architecture="$(uname -m)"
           test "$architecture" = arm64 || test "$architecture" = x86_64
-          (cd "$runtime" && "./bin/node-$architecture" test-runtime.mjs)
-          (cd "$runtime" && "./bin/node-$architecture" test-runtime-metadata.mjs)
-          (cd "$runtime" && "./bin/node-$architecture" --test test-mcp-client.mjs)
-          "$runtime/bin/node-$architecture" "$runtime/runtime-health.mjs" | python3 -c \
+          (cd "$runtime" && "./bin/node" test-runtime.mjs)
+          (cd "$runtime" && "./bin/node" test-runtime-metadata.mjs)
+          (cd "$runtime" && "./bin/node" --test test-mcp-client.mjs)
+          "$runtime/bin/node" "$runtime/runtime-health.mjs" | python3 -c \
             'import json,sys; r = json.load(sys.stdin); p=json.load(open(sys.argv[1])); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["dependencies"]["@earendil-works/pi-coding-agent"] and "open_current_story" in r["toolNames"]' AgentRuntime/package.json
-          TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" \
+          TRENDINGTAB_TEST_NODE="$runtime/bin/node" \
           TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" script -q /dev/null swift test
-          TEST_RUNNER_TRENDINGTAB_REQUIRE_PI_INTEGRATION=1 TEST_RUNNER_TRENDINGTAB_TEST_NODE="$runtime/bin/node-$architecture" TEST_RUNNER_TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" \
+          TEST_RUNNER_TRENDINGTAB_REQUIRE_PI_INTEGRATION=1 TEST_RUNNER_TRENDINGTAB_TEST_NODE="$runtime/bin/node" TEST_RUNNER_TRENDINGTAB_TEST_RUNTIME="$runtime/runtime.mjs" \
           xcodebuild -project TrendingTab.xcodeproj -scheme TrendingTabBrowserTests \
             -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 
@@ -201,6 +202,9 @@ jobs:
           cmp AgentRuntime/LICENSES/pi-MIT.txt "$app/Contents/Resources/AgentRuntime/LICENSES/pi-MIT.txt"
           node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
             "$app/Contents/Resources/AgentRuntime/package.json"
+          runtime="$app/Contents/Resources/AgentRuntime"
+          "$runtime/bin/node" "$runtime/runtime-health.mjs" | python3 -c \
+            'import json,platform,sys; r=json.load(sys.stdin); p=json.load(open(sys.argv[1])); assert r["architecture"] == {"arm64":"arm64", "x86_64":"x64"}[platform.machine()] and r["streaming"] and r["tools"] and r["piVersion"] == p["dependencies"]["@earendil-works/pi-coding-agent"]' "$runtime/package.json"
 
           verification_args=("$app")
           if [ "${SIGNING_MODE:-ad-hoc}" = "developer-id" ]; then
@@ -246,6 +250,7 @@ jobs:
           node -e 'const pkg = require(process.argv[1]); if (pkg.version !== process.env.RUNTIME_VERSION) process.exit(1)' \
             "$app/Contents/Resources/package.json"
           lipo "$app/Contents/MacOS/node" -verify_arch arm64
+          python3 "$GITHUB_WORKSPACE/scripts/verify-native-architectures.py" "$app"
           lipo "$app/Contents/MacOS/node" -verify_arch x86_64
           "$app/Contents/MacOS/node" "$app/Contents/Resources/runtime-health.mjs" | python3 -c \
             'import json,plistlib,sys; r = json.load(sys.stdin); p=plistlib.load(open(sys.argv[1],"rb")); assert r["protocol"] == 1 and r["streaming"] and r["tools"] and r["piVersion"] == p["TrendingTabPiVersion"] and "open_current_story" in r["toolNames"]' "$app/Contents/Info.plist"
@@ -262,7 +267,7 @@ jobs:
           test -n "$dmg"
           architecture="$(uname -m)"
           TRENDINGTAB_TEST_NOTARIZED_RUNTIME_DMG="$dmg" \
-          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/agent-runtime-test/bin/node-$architecture" \
+          TRENDINGTAB_TEST_NODE="$RUNNER_TEMP/agent-runtime-test/bin/node" \
           TRENDINGTAB_TEST_RUNTIME="$RUNNER_TEMP/agent-runtime-test/runtime.mjs" \
           TRENDINGTAB_RUNTIME_DIAGNOSTICS=1 \
             swift test --filter AgentRuntimeManifestTests/testNotarizedRuntimeInstallAndRollback
@@ -326,6 +331,7 @@ jobs:
           trap 'hdiutil detach "$mount" -quiet' EXIT
           app="$mount/AgentRuntime.app"
           codesign --verify --deep --strict "$app"
+          python3 "$GITHUB_WORKSPACE/scripts/verify-native-architectures.py" "$app"
           lipo "$app/Contents/MacOS/node" -verify_arch x86_64
           if [ "$RELEASE_BUILD" = true ]; then
             codesign --verify --deep --strict -R '=anchor apple generic and identifier "dev.trendingtab.runtime" and certificate leaf[subject.OU] = "GJUT2BVM7R" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists' "$app"
@@ -370,6 +376,7 @@ jobs:
           notes="$RUNNER_TEMP/release-notes.md"
           {
             printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
+            printf '随包 Agent Runtime 的 Node 和原生插件统一提供 arm64／x86_64 Universal 架构；Apple Silicon 使用原生 ARM 路径。CI 检查包内每个 Mach-O 文件，并在 Intel runner 验证 Intel 执行。\n\n'
             printf '事件中心包含原文浏览器和流式 AI 对话，可使用应用内登录状态阅读及研究热点。支持配置模型、搜索服务和 MCP 工具。\n\n'
             printf '地址栏的站点信息可查看域名、页面连接状态、应用内登录身份和标签控制权限。预览 AI 页面及查看站点信息会保持 AI 操作；在网页内输入或交互会接管页面。\n\n'
             printf '模型连接保存工具调用测试结果。已完成测试但未调用工具的连接会暂停深度研究并显示原因，可继续使用直接回答；修改连接参数、密钥或请求头后可重新测试。\n\n'

@@ -62,6 +62,7 @@ def main():
         verify(args.app, "dev.trendingtab.app", args.developer_id)
         verify(args.app / "Contents/PlugIns/TrendingTabWidget.appex", "dev.trendingtab.app.widget", args.developer_id)
         run("codesign", "--verify", "--deep", "--strict", str(args.app))
+        run(sys.executable, str(Path(__file__).with_name("verify-native-architectures.py")), str(args.app))
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(f"Bundle validation failed: {error}", file=sys.stderr)
         return 1
