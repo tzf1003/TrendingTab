@@ -394,6 +394,7 @@ jobs:
           else
             gh release create "$tag" "${assets[@]}" \
               --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
               --title "TrendingTab ${version}" \
               --notes-file "$notes" \
               --latest
