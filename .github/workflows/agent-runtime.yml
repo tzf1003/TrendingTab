@@ -7,6 +7,13 @@ on:
         description: 'Runtime version (e.g. 0.3.0)'
         required: true
         type: string
+      build_runner:
+        description: macOS build runner
+        type: choice
+        default: macos-15-intel
+        options:
+          - macos-15-intel
+          - macos-15
 
 permissions:
   contents: write
@@ -18,7 +25,7 @@ concurrency:
 jobs:
   runtime:
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    runs-on: ${{ inputs.build_runner || 'macos-15-intel' }}
     timeout-minutes: 60
     env:
       MARKETING_VERSION: ${{ inputs.version }}
@@ -149,7 +156,7 @@ jobs:
 
   publish:
     needs: [runtime, verify-architectures]
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8

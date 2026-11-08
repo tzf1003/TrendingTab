@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      build_runner:
+        description: macOS build runner
+        type: choice
+        default: macos-15-intel
+        options:
+          - macos-15-intel
+          - macos-15
 
 permissions:
   contents: write
@@ -15,7 +23,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: ${{ inputs.build_runner || 'macos-15-intel' }}
     timeout-minutes: 60
     env:
       MARKETING_VERSION: 0.2.${{ github.run_number }}
@@ -330,7 +338,7 @@ jobs:
   publish:
     needs: [release, verify-runtime-intel]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -363,6 +371,7 @@ jobs:
           {
             printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
             printf '事件中心包含原文浏览器和流式 AI 对话，可使用应用内登录状态阅读及研究热点。支持配置模型、搜索服务和 MCP 工具。\n\n'
+            printf '地址栏的站点信息可查看域名、页面连接状态、应用内登录身份和标签控制权限。预览 AI 页面及查看站点信息会保持 AI 操作；在网页内输入或交互会接管页面。\n\n'
             printf '模型连接保存工具调用测试结果。已完成测试但未调用工具的连接会暂停深度研究并显示原因，可继续使用直接回答；修改连接参数、密钥或请求头后可重新测试。\n\n'
             printf 'AI 可主动列出本对话的研究标签，后台页面保持挂载；读取、观察和滚动可短暂等待加载。普通输入框支持确认后填写，输入后重新观察，提交单独确认。网站可能在输入时发送请求；密码、验证码等字段由用户处理。\n\n'
             printf 'AI 工具发起的明确表单和按钮操作需要逐次确认；网页自身脚本可能未经确认发送后台请求。登录会话共享与浏览器边界详见 [AI 与提醒说明](https://github.com/tzf1003/TrendingTab/blob/main/docs/ai-and-alerts.md)。\n\n'
