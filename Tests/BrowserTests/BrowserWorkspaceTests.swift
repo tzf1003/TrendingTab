@@ -1516,12 +1516,15 @@ final class BrowserWorkspaceTests: XCTestCase {
     }
 
     func testLiveBingSearchExtractionWhenConfigured() async throws {
-        guard ProcessInfo.processInfo.environment["TRENDINGTAB_TEST_LIVE_BING"] == "1" else {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["TRENDINGTAB_TEST_LIVE_BING"] == "1" else {
             throw XCTSkip("Set TRENDINGTAB_TEST_LIVE_BING to exercise actual Bing search extraction.")
         }
         let workspace = BrowserWorkspace(dataStore: .nonPersistent())
         let broker = BrowserToolBroker(workspace: workspace)
-        let destination = try ResearchWebSearch.destination(engine: .bing, request: .init(query: "macOS", timeRange: "day"))
+        let search = ResearchSearchRequest(query: "macOS", timeRange: "day", domain: environment["TRENDINGTAB_TEST_LIVE_SEARCH_DOMAIN"])
+        if environment["TRENDINGTAB_TEST_LIVE_SEARCH_DOMAIN"] != nil { XCTAssertNotNil(search.domain, "The configured search domain must be valid.") }
+        let destination = try ResearchWebSearch.destination(engine: .bing, request: search)
         let opened = try await broker.execute(request(.openAIPage, ["url": destination.url.absoluteString]), runID: "live-search", itemID: "live-search", taskTitle: "搜索验证")
         XCTAssertTrue(opened.contains("页面已打开"), opened)
         let tab = try XCTUnwrap(workspace.tabs.first { $0.owner == .agent })
@@ -1531,8 +1534,20 @@ final class BrowserWorkspaceTests: XCTestCase {
         let marker = try XCTUnwrap(result.range(of: "结果标识："))
         let reference = try XCTUnwrap(result[marker.upperBound...].split(separator: "\n").first).description
         let followed = try await broker.execute(request(.openSearchResult, ["resultID": reference]), runID: "live-search", itemID: "live-search", taskTitle: "搜索验证")
-        XCTAssertTrue(followed.contains("页面已打开"), followed)
         let openedTab = try XCTUnwrap(workspace.tabs.last { $0.owner == .agent && $0.id != tab.id })
+        let navigation = "host=\(openedTab.webView.url?.host ?? "unknown") status=\(openedTab.httpStatus.map(String.init) ?? "none") needsUserAction=\(openedTab.needsUserAction) blockedMethod=\(openedTab.blockedAction?.method ?? "none") blockedHost=\(openedTab.blockedAction?.destination.host ?? "none") errorDomain=\(openedTab.navigationErrorDomain ?? "none") errorCode=\(openedTab.navigationErrorCode.map(String.init) ?? "none")"
+        print("Live search navigation: \(navigation)")
+        XCTContext.runActivity(named: "搜索来源导航") { activity in
+            let attachment = XCTAttachment(string: navigation)
+            attachment.name = "live-search-navigation.txt"
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
+        XCTAssertTrue(followed.contains("页面已打开"), followed)
+        if let domain = search.domain {
+            let host = openedTab.webView.url?.host?.lowercased() ?? ""
+            XCTAssertTrue(host == domain || host.hasSuffix("." + domain), "Search result left the configured domain: \(host)")
+        }
         let article = try await broker.execute(request(.readAIPage, ["tabID": openedTab.id.uuidString]), runID: "live-search", itemID: "live-search", taskTitle: "搜索验证")
         XCTAssertTrue(article.contains("证据编号"), article)
         XCTAssertTrue(broker.evidence.records.contains { $0.level == .pageText })

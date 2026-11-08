@@ -10,6 +10,8 @@
 
 另以匿名会话执行真实 Bing 搜索，搜索结果提取和摘要证据登记成功；打开首条结果后触发“需要用户接管”，完整搜索、打开与正文读取测试失败。该记录不能作为端到端真实搜索验收，也未验证百度或 Google 的实时页面。当前变更的签名发布制品需由后续 CI 验证。
 
+随后给真实搜索测试补充导航诊断，记录来源域名、HTTP 状态、被阻止操作的方法／域名及导航错误，不记录查询参数或凭据。再次执行未限定站点的同一查询，首条结果为 `www.applex.net`，返回 HTTP 403，`needsUserAction=true`、没有被阻止的表单或导航错误；因此该次接管提示来自站点访问限制。另启用可选 `TRENDINGTAB_TEST_LIVE_SEARCH_DOMAIN=support.apple.com`，保留默认一天时间范围，搜索未返回可打开结果，测试仍失败。两项实际结果分别保存在 `search-regression/live-navigation.json` 和 `live-apple-source.json`；均不能作为完整搜索与正文读取通过的证据。
+
 ### 已安装组件架构校验与 v0.2.61
 
 正式版 [v0.2.61](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.61) 对应提交 `56df6039cfb785274635741a01a98dd055a8aa50`。[CI 42464362135](https://github.com/tzf1003/TrendingTab/actions/runs/42464362135) 的构建、公证、Runtime 安装回退、未公证镜像拒绝、Intel 原生运行和发布全部通过。Swift 测试 121 项，4 项按环境条件跳过；浏览器测试 77 项，2 项真实网络测试按配置跳过，均无意外失败。网页脚本后台请求的兼容性边界继续由预期失败记录。
