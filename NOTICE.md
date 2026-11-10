@@ -2,6 +2,7 @@
 
 - GRDB.swift：MIT License，https://github.com/groue/GRDB.swift
 - SwiftSoup：MIT License，https://github.com/scinfu/SwiftSoup
+- Dark Reader API 4.9.135：MIT License，https://github.com/darkreader/darkreader 。随包网页主题引擎和许可全文保存在 `App/BrowserTheme/`。
 - Pi SDK 1.5.0：MIT License，https://github.com/earendil-works/pi 。版权及许可全文见 `AgentRuntime/LICENSES/pi-MIT.txt`，并随运行时分发。
 - Node.js 22.19.0：许可全文和所含组件说明随运行时保存在 `NODE-LICENSE`，https://nodejs.org/ 。
 - TypeBox 及其他 npm 依赖：版本由 `AgentRuntime/package-lock.json` 固定，各包的许可证和归属文件随运行时保留。

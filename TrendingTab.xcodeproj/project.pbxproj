@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B801D0000000000000000001 /* BrowserTheme in Resources */ = {isa = PBXBuildFile; fileRef = B801D0000000000000000003 /* BrowserTheme */; };
+		B801D0000000000000000002 /* BrowserTheme in Resources */ = {isa = PBXBuildFile; fileRef = B801D0000000000000000003 /* BrowserTheme */; };
 		109473E30100CA632FABF0EC /* BrowserWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8BF6DEDD1BCEC9DA0D2BFF6 /* BrowserWorkspace.swift */; };
 		1A013A3C8449968D054632BC /* SurfacePalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = B155F0AD78D1E1D5F6B01300 /* SurfacePalette.swift */; };
 		1A5F1BDCE0E1E3BE94215EE8 /* BrowserToolBroker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F18F231B050B87DC487FEC0 /* BrowserToolBroker.swift */; };
@@ -64,6 +66,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		B801D0000000000000000003 /* BrowserTheme */ = {isa = PBXFileReference; lastKnownFileType = folder; path = BrowserTheme; sourceTree = "<group>"; };
 		01B21A1BED4F12E5FD2945D1 /* fixture-server.mjs */ = {isa = PBXFileReference; path = "fixture-server.mjs"; sourceTree = "<group>"; };
 		0A19C661E6E6AE53842DCCD7 /* TrendingTabWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TrendingTabWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0E4498B272C4670EF1D067D2 /* BrowserWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserWorkspaceTests.swift; sourceTree = "<group>"; };
@@ -190,6 +193,7 @@
 		E195F38CD4FA77CC665AD395 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				B801D0000000000000000003 /* BrowserTheme */,
 				34EBB2AE5EB4B90006262732 /* AppTheme.swift */,
 				901DB676F89CB659FC9FE6E9 /* AppWindowRouter.swift */,
 				2C1A86446D121ABB235473B2 /* BrowserAudio.swift */,
@@ -242,6 +246,7 @@
 			buildConfigurationList = 5BA16E8D67AD16703993E8D5 /* Build configuration list for PBXNativeTarget "TrendingTab" */;
 			buildPhases = (
 				B4C29048E1D7C4165E28CBF5 /* Sources */,
+				B801D0000000000000000004 /* Resources */,
 				30D4F946AB88383861C25800 /* Frameworks */,
 				E0DA5FF36DAD465B4C66FF3E /* Embed Foundation Extensions */,
 			);
@@ -328,10 +333,19 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		B801D0000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B801D0000000000000000001 /* BrowserTheme in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		430D127CC73CB6A409CDD9C6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B801D0000000000000000002 /* BrowserTheme in Resources */,
 				E8371929D0AB3FB77158577C /* fixture-server.mjs in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

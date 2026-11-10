@@ -67,6 +67,87 @@ final class BrowserWorkspaceTests: XCTestCase {
         return window
     }
 
+    private func waitForPage(_ expression: String, in tab: BrowserWorkspace.Tab) async throws {
+        for _ in 0..<200 {
+            if (try? await tab.webView.evaluateJavaScript(expression)) as? Bool == true { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail("Page condition did not become true: \(expression)")
+    }
+
+    func testPageAppearanceFollowsWindowWithoutReloadingOrLosingDraft() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let window = mediaWindow(workspace)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let tab = workspace.newTab(url: base.appendingPathComponent("appearance"))
+        defer { workspace.close(tab); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 && !tab.webView.isLoading }
+        let isDark = "parseInt(getComputedStyle(document.body).backgroundColor.match(/\\d+/)[0]) < 80"
+        try await waitForPage(isDark, in: tab)
+        let textIsLight = try await tab.webView.evaluateJavaScript("parseInt(getComputedStyle(document.querySelector('article')).color.match(/\\d+/)[0]) > 150") as? Bool
+        XCTAssertEqual(textIsLight, true)
+        let engineIsIsolated = try await tab.webView.evaluateJavaScript("typeof DarkReader === 'undefined'") as? Bool
+        XCTAssertEqual(engineIsIsolated, true)
+        let imageFilter = try await tab.webView.evaluateJavaScript("getComputedStyle(document.querySelector('img')).filter") as? String
+        XCTAssertEqual(imageFilter, "none")
+        _ = try await tab.webView.evaluateJavaScript("document.querySelector('input').value='未提交笔记';scrollTo(0,300)")
+        let revision = tab.navigationRevision
+        let interaction = tab.userInteractionRevision
+        window.appearance = NSAppearance(named: .aqua)
+        try await waitForPage("getComputedStyle(document.body).backgroundColor === 'rgb(255, 255, 255)'", in: tab)
+        let draft = try await tab.webView.evaluateJavaScript("document.querySelector('input').value") as? String
+        XCTAssertEqual(draft, "未提交笔记")
+        let scroll = try await tab.webView.evaluateJavaScript("scrollY") as? Double
+        XCTAssertGreaterThan(scroll ?? 0, 0)
+        XCTAssertEqual(tab.navigationRevision, revision)
+        XCTAssertEqual(tab.userInteractionRevision, interaction)
+        window.appearance = NSAppearance(named: .darkAqua)
+        try await waitForPage(isDark, in: tab)
+        workspace.load(base.appendingPathComponent("appearance"), in: tab)
+        try await waitUntil { tab.finishedRevision > revision && !tab.webView.isLoading }
+        try await waitForPage(isDark, in: tab)
+    }
+
+    func testAppearanceCoversDynamicContentBackgroundAgentTabsAndFrames() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent(), researchURLAllowed: { _ in true })
+        let window = mediaWindow(workspace)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let tab = workspace.newTab(url: URL(string: base.absoluteString + "/appearance?frame=1")!)
+        let agent = workspace.newTab(owner: .agent, taskID: "appearance", url: base.appendingPathComponent("appearance"), select: false)
+        defer { workspace.close(tab); workspace.close(agent); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 && agent.finishedRevision > 0 }
+        try await waitForPage("parseInt(getComputedStyle(document.body).backgroundColor.match(/\\d+/)[0]) < 80", in: agent)
+        _ = try await tab.webView.evaluateJavaScript("document.body.insertAdjacentHTML('afterbegin', '<div class=dynamic>动态加载的正文</div>')")
+        try await waitForPage("parseInt(getComputedStyle(document.querySelector('.dynamic')).backgroundColor.match(/\\d+/)[0]) < 80", in: tab)
+        let frame = try XCTUnwrap(tab.webView.configuration.userContentController.userScripts.first { $0.source.hasPrefix("// TrendingTab automatic page appearance") })
+        XCTAssertFalse(frame.isForMainFrameOnly)
+        // The cross-origin child reports its own computed appearance via postMessage.
+        _ = try await tab.webView.evaluateJavaScript("addEventListener('message', e => { window.frameBackground = e.data.appearance; })")
+        try await waitForPage("window.frameBackground && parseInt(frameBackground.match(/\\d+/)[0]) < 80", in: tab)
+        XCTAssertFalse(agent.userTookControl)
+        XCTAssertEqual(workspace.selectedID, tab.id)
+        window.appearance = NSAppearance(named: .aqua)
+        try await waitForPage("getComputedStyle(document.body).backgroundColor === 'rgb(255, 255, 255)'", in: agent)
+        try await waitForPage("window.frameBackground === 'rgb(255, 255, 255)'", in: tab)
+        XCTAssertFalse(agent.userTookControl)
+    }
+
+    func testSiteAuthoredDarkAppearanceRemainsReadable() async throws {
+        let (server, base) = try fixture()
+        defer { server.terminate() }
+        let workspace = BrowserWorkspace(dataStore: .nonPersistent())
+        let window = mediaWindow(workspace)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let tab = workspace.newTab(url: URL(string: base.absoluteString + "/appearance?native=1")!)
+        defer { workspace.close(tab); window.close() }
+        try await waitUntil { tab.finishedRevision > 0 }
+        try await waitForPage("parseInt(getComputedStyle(document.body).backgroundColor.match(/\\d+/)[0]) < 80 && parseInt(getComputedStyle(document.body).color.match(/\\d+/)[0]) > 150", in: tab)
+    }
+
     func testInitialPageStyleFollowsViewportOrientation() {
         XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 450, height: 750)), .mobile)
         XCTAssertEqual(BrowserPageStyle.initialStyle(for: CGSize(width: 1100, height: 1300)), .mobile)
@@ -153,7 +234,8 @@ final class BrowserWorkspaceTests: XCTestCase {
         let mutedOutput = try await tab.webView.evaluateJavaScript("createdGains.at(-1).gain.value") as? Double
         XCTAssertEqual(mutedOutput, 0, "The final Web Audio output is silent while the source keeps running")
         workspace.toggleMuted(in: tab)
-        let enabledOutput = try await tab.webView.callAsyncJavaScript("await new Promise(resolve=>setTimeout(resolve,100));return createdGains.at(-1).gain.value", arguments: [:], in: nil, contentWorld: .page) as? Double
+        try await waitForPage("createdGains.at(-1).gain.value === 1", in: tab)
+        let enabledOutput = try await tab.webView.evaluateJavaScript("createdGains.at(-1).gain.value") as? Double
         XCTAssertEqual(enabledOutput, 1)
         workspace.toggleMuted(in: tab)
         _ = try await tab.webView.evaluateJavaScript("oscillator.stop();context.close();true")

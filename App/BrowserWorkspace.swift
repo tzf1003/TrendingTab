@@ -66,6 +66,23 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     static let websiteStoreID = UUID(uuidString: "D8A7243E-6C70-40A6-A716-94F738F37C18")!
     static func persistentDataStore() -> WKWebsiteDataStore { WKWebsiteDataStore(forIdentifier: websiteStoreID) }
 
+    private static let appearanceScriptMarker = "// TrendingTab automatic page appearance\n"
+    private static let appearanceScript: String = {
+        guard let url = Bundle(for: BrowserWorkspace.self).url(forResource: "darkreader", withExtension: "js", subdirectory: "BrowserTheme"),
+              let engine = try? String(contentsOf: url, encoding: .utf8) else {
+            assertionFailure("Missing bundled browser theme engine")
+            return ""
+        }
+        return appearanceScriptMarker + engine + """
+
+            DarkReader.setFetchMethod(window.fetch.bind(window));
+            DarkReader.auto({
+                darkSchemeBackgroundColor: '#20252b',
+                darkSchemeTextColor: '#e8e6e3'
+            });
+            """
+    }()
+
     static func clearWebsiteData(_ record: WKWebsiteDataRecord, in store: WKWebsiteDataStore) async {
         await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: [record])
         let name = record.displayName.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
@@ -271,13 +288,21 @@ final class BrowserWorkspace: NSObject, ObservableObject, WKNavigationDelegate, 
     private func addTab(owner: Owner, taskID: String?, configuration: WKWebViewConfiguration, url: URL?, select: Bool) -> Tab {
         // Popup configurations may share the parent's controller. Give every tab
         // its own sound handler and default, while preserving other user scripts.
-        let scripts = configuration.userContentController.userScripts.filter { !$0.source.hasPrefix(BrowserAudioController.scriptMarker) }
+        let scripts = configuration.userContentController.userScripts.filter {
+            !$0.source.hasPrefix(BrowserAudioController.scriptMarker) && !$0.source.hasPrefix(Self.appearanceScriptMarker)
+        }
         configuration.userContentController = WKUserContentController()
         for script in scripts { configuration.userContentController.addUserScript(script) }
+        // The isolated world keeps the bundled engine out of the site's globals.
+        // Its media query follows WebKit's effective appearance in every frame,
+        // including background tabs, without reloading or replacing page content.
+        configuration.userContentController.addUserScript(WKUserScript(source: Self.appearanceScript,
+            injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .defaultClient))
         configuration.mediaTypesRequiringUserActionForPlayback = []
         // Background research starts with the same viewport as the reading pane.
         let initialFrame = CGRect(origin: .zero, size: viewportSize)
         let webView = WorkspaceWebView(frame: initialFrame, configuration: configuration)
+        webView.underPageBackgroundColor = .windowBackgroundColor
         let tab = Tab(owner: owner, agentTaskID: taskID, webView: webView)
         preparePageStyle(in: tab)
         webView.navigationDelegate = self

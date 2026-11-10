@@ -3,6 +3,20 @@ import { createServer } from "node:http";
 let submissions = 0;
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/appearance") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>网页外观验收</title>
+      <meta name="color-scheme" content="light dark">
+      <style>body{margin:28px;font:18px -apple-system;line-height:1.7;background:#fff;color:#202124}
+      article,.dynamic{background:#fafafa;color:#222;padding:20px;border:1px solid #ddd}h1{font-size:28px}input{font:inherit}
+      iframe{width:90%;height:170px}.space{height:1200px}
+      ${url.searchParams.has("native") ? '@media(prefers-color-scheme:dark){body,article{background:#20252b;color:#e8e6e3}}' : ''}</style>
+      </head><body><article><h1>网页自动适配深色模式</h1><p>正文、卡片与表单跟随应用外观。</p>
+      <label>阅读笔记 <input aria-label="阅读笔记"></label>
+      <p><img id="photo" alt="彩色图片" width="120" height="48" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='48'%3E%3Cpath fill='%23f56b45' d='M0 0h60v48H0z'/%3E%3Cpath fill='%232499ee' d='M60 0h60v48H60z'/%3E%3C/svg%3E"></p></article>
+      ${url.searchParams.has("frame") ? `<iframe src="http://localhost:${server.address().port}/appearance"></iframe>` : ''}
+      <div class="space"></div><script>if(parent!==window)setInterval(()=>parent.postMessage({appearance:getComputedStyle(document.body).backgroundColor},'*'),100)</script></body></html>`);
+    return;
+  }
   if (url.pathname === "/app-redirect") {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(`<!doctype html><html><head><title>保留网页阅读</title></head><body>
       <article><h1>可阅读的报道</h1><p>网站希望打开应用时，原文仍可继续阅读。</p></article>

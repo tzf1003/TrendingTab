@@ -26,8 +26,12 @@ targets:
     type: application
     platform: macOS
     sources:
-      - App
+      - path: App
+        excludes: [BrowserTheme]
       - Shared
+      - path: App/BrowserTheme
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: TrendingTabKit
         product: TrendingTabKit
@@ -81,6 +85,9 @@ targets:
       - App/AppTheme.swift
       - Shared/SurfacePalette.swift
       - Tests/BrowserTests
+      - path: App/BrowserTheme
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: TrendingTabKit
         product: TrendingTabKit
