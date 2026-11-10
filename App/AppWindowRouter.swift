@@ -3,6 +3,8 @@ import SwiftUI
 import TrendingTabCore
 import TrendingTabKit
 import TrendingTabWidgetBridge
+import WidgetKit
+import OSLog
 
 @MainActor
 final class AppWindowRouter: NSObject, NSWindowDelegate {
@@ -87,6 +89,16 @@ final class TrendingTabAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppWindowRouter.shared.handleActivation()
+        let app = Bundle.main.bundleURL
+        Task.detached(priority: .utility) {
+            do {
+                try WidgetExtensionMaintenance.repairAfterLaunch(at: app)
+                WidgetCenter.shared.reloadTimelines(ofKind: "TrendingTab")
+            } catch {
+                Logger(subsystem: "dev.trendingtab.app", category: "WidgetRecovery")
+                    .error("小组件恢复失败：\(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

@@ -161,27 +161,42 @@ public enum AppInstaller {
         try fileManager.copyItem(at: mountedApp, to: staged)
         try validateApplication(at: staged, expectedVersion: expectedVersion)
 
+        try replaceApplication(staged: staged, destination: destination, backup: backup,
+            fileManager: fileManager, prepare: WidgetExtensionMaintenance.prepareForReplacement,
+            register: WidgetExtensionMaintenance.register)
+        return destination
+    }
+
+    static func replaceApplication(
+        staged: URL, destination: URL, backup: URL,
+        fileManager: FileManager = .default,
+        prepare: (URL) throws -> Void, register: (URL) throws -> Void
+    ) throws {
         var movedExistingApp = false
+        var installedNewApp = false
         do {
             if fileManager.fileExists(atPath: destination.path) {
+                try prepare(destination)
                 try fileManager.moveItem(at: destination, to: backup)
                 movedExistingApp = true
             }
             try fileManager.moveItem(at: staged, to: destination)
+            installedNewApp = true
+            try register(destination)
             if movedExistingApp {
                 try? fileManager.removeItem(at: backup)
             }
         } catch {
-            if fileManager.fileExists(atPath: destination.path) {
+            if installedNewApp, fileManager.fileExists(atPath: destination.path) {
                 try? fileManager.removeItem(at: destination)
             }
             if movedExistingApp, fileManager.fileExists(atPath: backup.path) {
                 try? fileManager.moveItem(at: backup, to: destination)
+                try? register(destination)
             }
             try? fileManager.removeItem(at: staged)
             throw AppUpdateError.installFailed(error.localizedDescription)
         }
-        return destination
     }
 
     public static func relaunch(_ app: URL) throws {
