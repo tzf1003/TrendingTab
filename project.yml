@@ -52,6 +52,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
+        CFBundleIconFile: AppIconLegacy
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleURLTypes:

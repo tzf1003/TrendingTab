@@ -2,6 +2,7 @@
 """Validate the identities WidgetKit and App Intents use at runtime."""
 
 import argparse
+import json
 import plistlib
 import subprocess
 import sys
@@ -15,6 +16,19 @@ def run(*args):
 def check(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def verify_icon(bundle):
+    info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+    name = info.get("CFBundleIconFile", "")
+    check(name and Path(name).name == name, "Application icon file is not configured")
+    filename = name if name.endswith(".icns") else f"{name}.icns"
+    icon = bundle / "Contents/Resources" / filename
+    check(icon.is_file() and icon.read_bytes()[:4] == b"icns", "Application icon resource is missing or invalid")
+    catalog = bundle / "Contents/Resources/Assets.car"
+    assets = json.loads(run("xcrun", "assetutil", "--info", str(catalog)))
+    check(any(item.get("Name") == "BrandIcon" for item in assets), "In-app brand icon is missing")
+    print(f"Verified application and in-app icons: {filename}, BrandIcon")
 
 
 def verify(bundle, identifier, developer_id):
@@ -59,6 +73,7 @@ def main():
     parser.add_argument("--developer-id", action="store_true")
     args = parser.parse_args()
     try:
+        verify_icon(args.app)
         verify(args.app, "dev.trendingtab.app", args.developer_id)
         verify(args.app / "Contents/PlugIns/TrendingTabWidget.appex", "dev.trendingtab.app.widget", args.developer_id)
         run("codesign", "--verify", "--deep", "--strict", str(args.app))

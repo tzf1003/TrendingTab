@@ -379,7 +379,7 @@ jobs:
           notes="$RUNNER_TEMP/release-notes.md"
           {
             printf '自动构建 `%s`，使用 %s。\n\n' "${GITHUB_SHA::12}" "$signing"
-            printf '应用图标、事件中心和设置页统一采用蓝色玻璃底板与渐变火焰设计。应用图标通过 Icon Composer 工程构建，界面标题显示配套全彩图标。\n\n'
+            printf '应用图标、事件中心和设置页统一采用蓝色玻璃底板与渐变火焰设计。保留可编辑的 Icon Composer 工程，并为旧版构建工具提供配套 ICNS 图标；发布检查核对系统图标和界面图标资源。\n\n'
             printf '改进中文跨来源事件聚合，优先分析多来源及指定权威来源报道；兼容模型返回的完整 JSON 代码块，并校验字段和证据引用。重大事件页面显示分析进度、配置要求、预算不足及调用失败原因，分类失败后暂停本轮调用。\n\n'
             printf '重大事件监测修复已通过本地回归和模拟模型验收；真实模型服务尚需在可用预算下复验。\n\n'
             printf '随包 Agent Runtime 的 Node 和原生插件统一提供 arm64／x86_64 Universal 架构；Apple Silicon 使用原生 ARM 路径。CI 检查包内每个 Mach-O 文件，并在 Intel runner 验证 Intel 执行。\n\n'

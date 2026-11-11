@@ -2,6 +2,14 @@
 
 ## 2026-11-11
 
+### 应用图标构建兼容与发布检查
+
+正式版 [v0.2.68](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.68) 对应提交 `6c24f088f6ec1b04ea4924aea6604664c1688c06`，已包含玻璃火焰设计与重大事件监测修复。[CI 42990758777](https://github.com/tzf1003/TrendingTab/actions/runs/42990758777) 的 Swift 134 项、浏览器 94 项回归分别跳过 4 项及 2 项，均零失败；签名公证、Runtime 安装回退与 Intel 验证通过。公开包检查发现，CI 使用的 Xcode 16.4 未编译 Icon Composer 工程，应用缺少 `CFBundleIconFile`；界面 `BrandIcon` 已打包。此问题由下载后的实际制品检查发现，记录保存在外接盘 `release-0.2.68/verification-failure.json`。
+
+应用补充由同一 Icon Composer 工程导出的 `AppIconLegacy.icns`，通过 `CFBundleIconFile` 为旧版工具链提供系统图标。新版工具链继续编译分层图标并生成 `AppIcon` 配置。发布检查同时核对系统图标配置、ICNS 文件和资源目录中的 `BrandIcon`，缺失时阻止发布。
+
+本地 arm64 Debug 的分层图标构建和排除分层资源后的兼容构建均通过，分别读回 `AppIcon` 与 `AppIconLegacy`；XcodeGen 生成工程包含兼容资源。新增检查正确拒绝实际 v0.2.68 制品。Atlas 辅助桌面在 Finder 确认兼容构建的火焰图标，任务窗口已关闭。证据位于外接盘 `release-0.2.69/icon-build-verification.json` 和 `fallback-finder.png`。
+
 ### 玻璃火焰应用图标
 
 应用使用 Icon Composer 分层工程生成系统图标，事件中心与设置页标题显示配套全彩图标。主应用 arm64 Debug 构建通过，应用包包含 `CFBundleIconFile=AppIcon`、`CFBundleIconName=AppIcon`、`AppIcon.icns` 和编译后的资源目录；XcodeGen 图标资源编译验证通过。
