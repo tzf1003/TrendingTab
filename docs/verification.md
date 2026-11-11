@@ -2,6 +2,14 @@
 
 ## 2026-11-11
 
+### v0.2.69 正式发布与公开制品验收
+
+正式版 [v0.2.69](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.69) 对应提交 `84842cdf80c5c6aeef6cba178b8322562f7f6421`，包含玻璃火焰图标、图标构建兼容和重大事件监测修复，已读回为 Latest。[CI 42996901698](https://github.com/tzf1003/TrendingTab/actions/runs/42996901698) 全部通过：Swift 134 项、浏览器 94 项测试分别跳过 4 项及 2 项，零失败；应用与 Runtime 签名公证、镜像校验、Runtime 安装回退、未公证组件拒绝和 Intel 原生验证通过。构建日志确认 `AppIconLegacy.icns` 与 `BrandIcon` 同时通过资源检查。
+
+公开应用 DMG 的 SHA-256 为 `a0bfe11fdc127d86f2e6c4b921a1b8b81ed78b0c679183b1a8e961db9c309b8d`，与 GitHub 资产 digest 和校验文件一致。实际镜像完整性、Developer ID 签名、公证票据、主应用／Widget 运行身份和深度签名通过；包内 5 个 Mach-O 文件均支持 arm64／x86_64。应用版本读回 0.2.69、构建号 69，`CFBundleIconFile=AppIconLegacy`，图标文件与仓库兼容资源逐字节一致，编译资源目录包含 `BrandIcon`。浏览器主题脚本及许可与源码一致，ARM Runtime 健康检查确认 Runtime 0.1.7、Pi 1.5.0、流式和 20 项工具可用。
+
+独立 Runtime 继续沿用 v0.2.60 的公开 0.1.7 制品，镜像、签名、公证票据、3 个原生文件的双架构和 ARM 健康检查再次通过。验证挂载均已卸载，外接盘证据位于 `release-0.2.69/verification.json`。本机 Gatekeeper 全局关闭，启用策略下的分发检查以 CI 为准。图标界面验收见下方 Atlas 记录；重大事件监测真实模型服务仍需在可用预算下复验。
+
 ### 应用图标构建兼容与发布检查
 
 正式版 [v0.2.68](https://github.com/tzf1003/TrendingTab/releases/tag/v0.2.68) 对应提交 `6c24f088f6ec1b04ea4924aea6604664c1688c06`，已包含玻璃火焰设计与重大事件监测修复。[CI 42990758777](https://github.com/tzf1003/TrendingTab/actions/runs/42990758777) 的 Swift 134 项、浏览器 94 项回归分别跳过 4 项及 2 项，均零失败；签名公证、Runtime 安装回退与 Intel 验证通过。公开包检查发现，CI 使用的 Xcode 16.4 未编译 Icon Composer 工程，应用缺少 `CFBundleIconFile`；界面 `BrandIcon` 已打包。此问题由下载后的实际制品检查发现，记录保存在外接盘 `release-0.2.68/verification-failure.json`。
