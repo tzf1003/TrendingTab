@@ -10,6 +10,18 @@ enum AppTheme {
     static let rule = SurfacePalette.hairline
 }
 
+struct AppBrandIcon: View {
+    var body: some View {
+        Image("BrandIcon")
+            .resizable()
+            .renderingMode(.original)
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: 32, height: 32)
+            .accessibilityHidden(true)
+    }
+}
+
 struct PaneSurface: View {
     enum Role {
         case sidebar, reader, inspector

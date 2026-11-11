@@ -15,8 +15,7 @@ public struct SemanticTopicBatch: Sendable {
     }
 
     public func parse(_ text: String) throws -> Set<String> {
-        guard let data = text.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let root = try? JSONSerialization.jsonObject(with: ModelJSON.data(text)) as? [String: Any],
               let ids = root["matchedIDs"] as? [String], Set(ids).count == ids.count,
               Set(ids).isSubset(of: allowedIDs) else { throw SourceFailure.schemaChanged("语义主题结果无效") }
         return Set(ids)

@@ -252,7 +252,7 @@ final class AutomaticSummaryTests: XCTestCase, @unchecked Sendable {
         model.load()
         XCTAssertTrue(model.items.isEmpty)
         await gate.release()
-        try await waitUntil { model.snapshot != nil }
+        try await waitUntil { !model.analyzingMajorEvents }
         let urls = await reader.urls
         XCTAssertEqual(urls.count, 3)
         let prompts = await recorder.prompts

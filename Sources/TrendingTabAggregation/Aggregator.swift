@@ -104,12 +104,22 @@ public enum TabAggregator {
 public enum EventGrouper {
     public static func group(_ items: [StoredItem], now: Date) -> [EventCluster] {
         var clusters: [EventCluster] = []
-        for stored in items.sorted(by: { $0.lastSeenAt > $1.lastSeenAt }) {
-            let tokens = Set(tokenize(stored.item.title))
+        let titleTokens = Dictionary(items.map { ($0.item.title, Set(tokenize($0.item.title))) }, uniquingKeysWith: { first, _ in first })
+        for stored in items.sorted(by: { ($0.lastSeenAt, $0.id) > ($1.lastSeenAt, $1.id) }) {
+            let tokens = titleTokens[stored.item.title] ?? []
+            let hasChinese = stored.item.title.unicodeScalars.contains { (0x3400...0x9FFF).contains($0.value) }
+            let numbers = Set(tokens.filter { $0.allSatisfy(\.isNumber) })
             if let index = clusters.firstIndex(where: { cluster in
-                let existing = Set(tokenize(cluster.title))
-                let overlap = Double(existing.intersection(tokens).count) / Double(max(1, min(existing.count, tokens.count)))
-                return overlap >= 0.6 && now.timeIntervalSince(cluster.updatedAt) < 48 * 3600
+                let existing = titleTokens[cluster.title] ?? []
+                let shared = existing.intersection(tokens).count
+                let overlap = Double(shared) / Double(max(1, min(existing.count, tokens.count)))
+                let coverage = Double(shared) / Double(max(1, max(existing.count, tokens.count)))
+                let exact = cluster.title.lowercased() == stored.item.title.lowercased()
+                // Short Chinese fragments alone do not identify an event.
+                let enough = !hasChinese || shared >= 3
+                let existingNumbers = Set(existing.filter { $0.allSatisfy(\.isNumber) })
+                let compatibleNumbers = numbers.isEmpty || existingNumbers.isEmpty || numbers == existingNumbers
+                return (exact || (enough && compatibleNumbers && overlap >= 0.6 && coverage >= 0.45)) && now.timeIntervalSince(cluster.updatedAt) < 48 * 3600
             }) {
                 var cluster = clusters[index]
                 if !cluster.itemIDs.contains(stored.id) { cluster.itemIDs.append(stored.id) }
@@ -130,6 +140,17 @@ public enum EventGrouper {
     }
 
     private static func tokenize(_ title: String) -> [String] {
-        title.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 2 }
+        let text = title.lowercased()
+        let pattern = "[\\x{3400}-\\x{9FFF}]+|[a-z]+|[0-9]+"
+        let expression = try! NSRegularExpression(pattern: pattern)
+        return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).flatMap { match -> [String] in
+            let word = String(text[Range(match.range, in: text)!])
+            guard let first = word.unicodeScalars.first, (0x3400...0x9FFF).contains(first.value) else {
+                return word.count >= 2 || word.allSatisfy(\.isNumber) ? [word] : []
+            }
+            let characters = Array(word)
+            guard characters.count > 1 else { return [] }
+            return zip(characters, characters.dropFirst()).map { String([$0, $1]) }
+        }
     }
 }

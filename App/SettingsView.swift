@@ -146,10 +146,13 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("设置")
-                .font(.system(size: 21, weight: .semibold))
-                .accessibilityAddTraits(.isHeader)
-                .padding(.horizontal, 8)
+            HStack(spacing: 10) {
+                AppBrandIcon()
+                Text("设置")
+                    .font(.system(size: 21, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            .padding(.horizontal, 8)
 
             VStack(alignment: .leading, spacing: 3) {
                 ForEach(SettingsSection.allCases) { section in

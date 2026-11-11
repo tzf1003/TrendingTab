@@ -344,7 +344,7 @@ private struct SSEParser {
 
 public enum AssessmentParser {
     public static func parse(_ text: String, allowedEvidence: Set<String>, allowedTopics: Set<UUID>) throws -> ModelAssessment {
-        guard let data = text.data(using: .utf8), let root = try? JSONValues.object(data) else {
+        guard let root = try? JSONValues.object(ModelJSON.data(text)) else {
             throw SourceFailure.schemaChanged("模型输出不是 JSON")
         }
         guard let importance = JSONValues.double(root["importance"]), importance.isFinite, (0...100).contains(importance),

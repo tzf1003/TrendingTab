@@ -66,7 +66,11 @@ private struct FairAnalysis: AIProvider {
             return AIResult(text: "{\"matchedIDs\":[]}", usage: AIUsage(inputTokens: 10, outputTokens: 5, estimated: false), finishReason: "stop")
         }
         await order.record("事件")
-        throw SourceFailure.unavailable("测试事件判断失败")
+        let line = prompt.split(separator: "\n").first { $0.hasPrefix("- ") }!
+        let id = line.dropFirst(2).components(separatedBy: ": ").first!
+        let payload: [String: Any] = ["importance": 30, "confidence": 0.9, "summary": "测试摘要", "evidenceIDs": [id]]
+        return AIResult(text: String(decoding: try JSONSerialization.data(withJSONObject: payload), as: UTF8.self),
+                        usage: AIUsage(inputTokens: 10, outputTokens: 5, estimated: false), finishReason: "stop")
     }
     func stream(system: String, prompt: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { $0.finish() }

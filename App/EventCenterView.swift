@@ -131,10 +131,7 @@ struct EventCenterView: View {
 
     private var sidebarHeader: some View {
         HStack(spacing: 10) {
-            Image(systemName: "flame.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-                .accessibilityHidden(true)
+            AppBrandIcon()
             Text("事件中心")
                 .font(.system(size: 23, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
@@ -243,13 +240,19 @@ struct EventCenterView: View {
     }
 
     private var feedEmptyState: some View {
-        ContentUnavailableView {
+        let majorEvents = currentTab?.kind == .majorEvents
+        let title = model.running ? "正在获取榜单" : majorEvents
+            ? (model.analyzingMajorEvents && model.majorEventAnalysisIssue == nil ? "正在分析重大事件" : "暂无已确认的重大事件")
+            : "当前没有热点"
+        return ContentUnavailableView {
             Label(
-                model.running ? "正在获取榜单" : "当前没有热点",
+                title,
                 systemImage: model.running ? "arrow.triangle.2.circlepath" : "list.number"
             )
         } description: {
-            if let tab = currentTab, tab.coverage != "已覆盖当前材料" {
+            if majorEvents, let coverage = model.majorEventAnalysisCoverage {
+                Text(coverage)
+            } else if let tab = currentTab, tab.coverage != "已覆盖当前材料" {
                 Text(tab.coverage)
             } else if currentTab == nil {
                 Text("可在设置中显示或添加榜单。")

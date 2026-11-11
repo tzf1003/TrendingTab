@@ -1,0 +1,68 @@
+{
+  "fill": {
+    "solid": "srgb:0.67843,0.81176,0.95294,1.00000"
+  },
+  "groups": [
+    {
+      "name": "Glass Flame",
+      "layers": [
+        {
+          "name": "Flame",
+          "image-name": "Flame.png",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "specular": false,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.22
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "blur-material": 0,
+      "lighting": "combined"
+    },
+    {
+      "name": "Blue Glass Background",
+      "layers": [
+        {
+          "name": "Background",
+          "image-name": "Background.png",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "specular": false,
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      },
+      "blur-material": 0,
+      "lighting": "combined"
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
