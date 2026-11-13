@@ -25,8 +25,8 @@ private struct MonitoringProvider: AIProvider {
         if invalidOutput {
             return AIResult(text: "{}", usage: AIUsage(inputTokens: 100, outputTokens: 50, estimated: false), finishReason: "stop")
         }
-        let ids = prompt.split(separator: "\n").filter { $0.hasPrefix("- ") }.map {
-            $0.dropFirst(2).components(separatedBy: ": ").first!
+        let ids = prompt.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("- ") }.compactMap {
+            String($0.dropFirst(2)).components(separatedBy: ": [").first
         }
         let payload: [String: Any] = ["importance": 90, "confidence": 0.95, "category": "科技",
             "summary": "多来源报道了卫星发射", "reason": "公开报道", "evidenceIDs": ids, "matchedTopicIDs": []]
@@ -60,6 +60,29 @@ final class MajorEventMonitoringTests: XCTestCase {
         XCTAssertEqual(groups.map(\.materialFingerprint), EventGrouper.group(reports.reversed(), now: .now).map(\.materialFingerprint))
     }
 
+    func testPersonnelResignationReportsWithDifferentPhrasingFormOneEvent() throws {
+        let reports = [
+            stored("weibo", "1", "黄仁勋宣布辞去董事长职务"),
+            stored("baidu", "2", "黄仁勋辞职获批，将卸任公司董事长"),
+        ]
+
+        let groups = EventGrouper.group(reports, now: .now)
+
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(Set(try XCTUnwrap(groups.first).itemIDs), Set(reports.map(\.id)))
+        XCTAssertTrue(EventGrouper.isPersonnelChange(reports[0].item.title))
+        XCTAssertTrue(EventGrouper.isPersonnelChange(reports[1].item.title))
+    }
+
+    func testPersonnelChangesForDifferentPeopleStaySeparate() {
+        let reports = [
+            stored("weibo", "1", "张三辞去公司董事长职务"),
+            stored("baidu", "2", "李四宣布辞去公司董事长职务"),
+        ]
+
+        XCTAssertEqual(EventGrouper.group(reports, now: .now).count, 2)
+    }
+
     func testShortSharedFragmentsAndDifferentEventNumbersStaySeparate() {
         let reports = [stored("weibo", "1", "四川发生6级地震"), stored("baidu", "2", "四川发生3级地震"),
             stored("news", "3", "北京今日天气晴朗"), stored("news", "4", "上海今日天气阴雨")]
@@ -85,8 +108,72 @@ final class MajorEventMonitoringTests: XCTestCase {
         try await exerciseMonitoring(fails: true)
     }
 
-    func testInvalidAssessmentStopsThePassAndAccountsForReturnedUsage() async throws {
+    func testInvalidAssessmentContinuesToOtherCandidatesAndAccountsForReturnedUsage() async throws {
         try await exerciseMonitoring(fails: false, invalidOutput: true)
+    }
+
+    func testEventSessionUsesLinkedReportsAsEvidence() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase(path: directory.appendingPathComponent("test.sqlite").path)
+        let now = Date()
+        let reports = [
+            stored("weibo", "1", "黄仁勋宣布辞去董事长职务", now: now),
+            stored("baidu", "2", "黄仁勋辞职获批，将卸任公司董事长", now: now),
+            stored("news", "3", "黄仁勋离任后继任安排待公布", now: now),
+        ]
+        for report in reports {
+            try database.save(result: FetchResult(sourceID: report.item.sourceID, boardID: report.item.boardID,
+                fetchedAt: report.lastSeenAt, parserVersion: "fixture", items: [report.item]))
+        }
+        let event = EventCluster(title: "黄仁勋辞职", itemIDs: reports.map(\.id), independentSourceCount: 3,
+                                 materialFingerprint: "event", updatedAt: now, createdAt: now)
+        try database.save(events: [event])
+        let model = TrendingAppModel(database: database, transport: NoMonitoringNetwork(), snapshotDirectory: directory,
+                                     automaticCredential: { _ in nil }, automaticProvider: nil)
+        defer { model.stop() }
+
+        let evidence = model.analysisEvidence(for: "event:\(event.id.uuidString)")
+
+        for report in reports {
+            XCTAssertTrue(evidence.contains(report.item.title))
+            XCTAssertTrue(evidence.contains("来源：\(report.item.sourceID)"))
+        }
+    }
+
+    func testMergedEventsKeepOldEventLinksResolvable() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase(path: directory.appendingPathComponent("test.sqlite").path)
+        let now = Date()
+        let reports = [
+            stored("weibo", "1", "黄仁勋宣布辞去董事长职务", now: now),
+            stored("baidu", "2", "黄仁勋辞职获批，将卸任公司董事长", now: now),
+        ]
+        for report in reports {
+            try database.save(result: FetchResult(sourceID: report.item.sourceID, boardID: report.item.boardID,
+                fetchedAt: report.lastSeenAt, parserVersion: "fixture", items: [report.item]))
+        }
+        let earliest = EventCluster(title: reports[0].item.title, itemIDs: [reports[0].id], independentSourceCount: 1,
+                                    materialFingerprint: "first", updatedAt: now.addingTimeInterval(-60), createdAt: now.addingTimeInterval(-120))
+        let later = EventCluster(title: reports[1].item.title, itemIDs: [reports[1].id], independentSourceCount: 1,
+                                 materialFingerprint: "second", updatedAt: now, createdAt: now.addingTimeInterval(-30))
+        try database.save(events: [earliest, later])
+
+        let model = TrendingAppModel(database: database, transport: NoMonitoringNetwork(), snapshotDirectory: directory,
+                                     automaticCredential: { _ in nil }, automaticProvider: nil)
+        XCTAssertEqual(try XCTUnwrap(model.events.first).id, earliest.id)
+        model.reveal(eventID: later.id)
+        XCTAssertEqual(model.requestedEventID, earliest.id)
+        model.stop()
+
+        let restored = TrendingAppModel(database: database, transport: NoMonitoringNetwork(), snapshotDirectory: directory,
+                                        automaticCredential: { _ in nil }, automaticProvider: nil)
+        defer { restored.stop() }
+        restored.reveal(eventID: later.id)
+        XCTAssertEqual(restored.requestedEventID, earliest.id)
     }
 
     private func exerciseMonitoring(fails: Bool, invalidOutput: Bool = false) async throws {
@@ -125,16 +212,24 @@ final class MajorEventMonitoringTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         let prompts = await calls.prompts
-        XCTAssertEqual(prompts.count, 1)
+        XCTAssertEqual(prompts.count, invalidOutput ? 2 : 1)
         XCTAssertTrue(try XCTUnwrap(prompts.first).contains("weibo:1"))
         XCTAssertTrue(try XCTUnwrap(prompts.first).contains("baidu:2"))
         XCTAssertFalse(try XCTUnwrap(prompts.first).contains("zhihu:3"))
+        XCTAssertTrue(try XCTUnwrap(prompts.first).contains("发布时间："))
+        XCTAssertTrue(try XCTUnwrap(prompts.first).contains("已有摘要："))
+        XCTAssertTrue(try XCTUnwrap(prompts.first).contains("重要人物、政府领导人或重要组织负责人"))
         let states = try await database.writer.read { try String.fetchAll($0, sql: "SELECT state FROM ai_runs") }
         if fails || invalidOutput {
-            XCTAssertEqual(states, [invalidOutput ? "failed-accounted" : "unknown-accounted"])
+            XCTAssertEqual(states, Array(repeating: invalidOutput ? "failed-accounted" : "unknown-accounted", count: invalidOutput ? 2 : 1))
             XCTAssertEqual(model.events.filter { $0.status == "major" }.count, 0)
             XCTAssertTrue(try XCTUnwrap(model.majorEventAnalysisCoverage).contains(invalidOutput ? "模型输出缺少必要字段" : "测试连接失败"))
-            XCTAssertEqual(model.diagnostics.first { $0.id == "event-analysis" }?.state, "failed")
+            if invalidOutput {
+                XCTAssertNil(model.majorEventAnalysisIssue)
+                XCTAssertEqual(model.eventDiagnostics.values.filter { $0.stage == "failed" }.count, 2)
+            } else {
+                XCTAssertEqual(model.diagnostics.first { $0.id == "event-analysis" }?.state, "failed")
+            }
             if invalidOutput {
                 let tokens = try await database.writer.read { try Int.fetchOne($0, sql: "SELECT reserved_tokens FROM ai_runs") }
                 XCTAssertEqual(tokens, 150)
@@ -144,6 +239,18 @@ final class MajorEventMonitoringTests: XCTestCase {
             XCTAssertEqual(model.events.filter { $0.status == "major" }.count, 1)
             XCTAssertEqual(model.snapshot?.tabs.first?.rows.count, 1)
             XCTAssertEqual(model.events.first { $0.status == "major" }?.assessmentSourceIDs, ["baidu", "weibo"])
+            XCTAssertEqual(model.events.first { $0.status == "major" }?.assessmentReason, "公开报道")
+            XCTAssertEqual(model.events.first { $0.status == "major" }?.assessmentEvidenceIDs, ["baidu:2", "weibo:1"])
+            XCTAssertEqual(model.events.first { $0.status == "major" }?.assessmentVersion, 2)
+            XCTAssertNotNil(model.events.first { $0.status == "major" }?.assessedAt)
+            XCTAssertEqual(model.events.first { $0.status == "major" }?.brief?.importanceAnalysis, "公开报道")
+            let event = try XCTUnwrap(model.events.first { $0.status == "major" })
+            let diagnostic = try XCTUnwrap(model.eventDiagnostics[event.id])
+            XCTAssertEqual(diagnostic.stage, "published")
+            XCTAssertEqual(diagnostic.materialIDs, ["baidu:2", "weibo:1"])
+            XCTAssertEqual(diagnostic.sourceIDs, ["baidu", "weibo"])
+            XCTAssertEqual(diagnostic.evidenceIDs, ["baidu:2", "weibo:1"])
+            XCTAssertEqual(diagnostic.assessmentVersion, 2)
             XCTAssertTrue(try XCTUnwrap(model.snapshot?.tabs.first?.coverage).contains("预算不足"))
         }
     }

@@ -15,6 +15,8 @@ struct EventCenterView: View {
     @State private var unresolvedReveal = false
     @State private var revealRevision = 0
     @State private var showsChat = true
+    @State private var showingEventSource = false
+    @State private var initializedMajorEventReader = false
     @AppStorage("research.mode.enabled") private var researchMode = false
     @StateObject private var browserTools: BrowserToolBroker
     @StateObject private var browser: BrowserWorkspace
@@ -59,6 +61,14 @@ struct EventCenterView: View {
         .onChange(of: model.pendingEventToken, initial: true) { _, _ in reconcileSelection() }
         .onChange(of: model.snapshot) { _, _ in reconcileSelection() }
         .onChange(of: model.tabs) { _, _ in reconcileSelection() }
+        .onChange(of: currentTab?.id, initial: true) { _, tabID in
+            guard let tab = tabs.first(where: { $0.id == tabID }), tab.kind == .majorEvents else { return }
+            showingEventSource = false
+            if !initializedMajorEventReader {
+                showsChat = false
+                initializedMajorEventReader = true
+            }
+        }
         .onChange(of: displayedRow?.id, initial: true) { _, _ in
             if openedRow == nil, let row = displayedRow { openStory(row) }
         }
@@ -95,6 +105,11 @@ struct EventCenterView: View {
     private var displayedRow: SnapshotRow? {
         guard !waitingForReveal else { return nil }
         return sortedRows.first { $0.id == selectedRowID } ?? sortedRows.first
+    }
+
+    private var selectedMajorEvent: EventCluster? {
+        guard currentTab?.kind == .majorEvents, let row = displayedRow else { return nil }
+        return event(for: row)
     }
 
     private var waitingForReveal: Bool {
@@ -198,6 +213,7 @@ struct EventCenterView: View {
         let rows = sortedRows
         let selection = openedRow?.id
         let showsRank = currentTab?.kind == .sourceBoard
+        let showsMajorEvent = currentTab?.kind == .majorEvents
         return ScrollViewReader { proxy in
             ScrollView {
                 if rows.isEmpty {
@@ -205,7 +221,7 @@ struct EventCenterView: View {
                 } else {
                     LazyVStack(spacing: 2) {
                         ForEach(rows) { row in
-                            feedRow(row, selected: row.id == selection, showsRank: showsRank)
+                            feedRow(row, selected: row.id == selection, showsRank: showsRank, showsMajorEvent: showsMajorEvent)
                                 .id(row.id)
                         }
                     }
@@ -223,7 +239,7 @@ struct EventCenterView: View {
 
     private var sidebarFooter: some View {
         HStack(spacing: 6) {
-            Text("\(sortedRows.count) 条热点")
+            Text("\(sortedRows.count) \(currentTab?.kind == .majorEvents ? "个事件" : "条热点")")
                 .monospacedDigit()
             Spacer(minLength: 4)
             if model.running {
@@ -266,7 +282,7 @@ struct EventCenterView: View {
         .padding(.top, 24)
     }
 
-    private func feedRow(_ row: SnapshotRow, selected: Bool, showsRank: Bool) -> some View {
+    private func feedRow(_ row: SnapshotRow, selected: Bool, showsRank: Bool, showsMajorEvent: Bool) -> some View {
         Button {
             selectStory(row, inNewTab: false)
         } label: {
@@ -286,6 +302,22 @@ struct EventCenterView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
+                    if showsMajorEvent, let event = event(for: row) {
+                        if let summary = event.brief?.overview ?? event.summary,
+                           !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(summary)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
+                        HStack(spacing: 6) {
+                            if let category = event.category, !category.isEmpty { Text(category) }
+                            Text("\(reports(for: row, event: event).count) 篇报道")
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    }
                     UpdateTimeLabel(date: updateDate(for: row))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -305,10 +337,10 @@ struct EventCenterView: View {
         }
         .buttonStyle(SelectableButtonStyle(selected: selected))
         .highPriorityGesture(TapGesture().modifiers(.command).onEnded {
-            selectStory(row, inNewTab: true)
+            selectStory(row, inNewTab: !showsMajorEvent)
         })
         .contextMenu {
-            Button("在新标签中打开") { selectStory(row, inNewTab: true) }
+            Button(showsMajorEvent ? "查看事件" : "在新标签中打开") { selectStory(row, inNewTab: !showsMajorEvent) }
         }
         .help(row.title)
     }
@@ -334,6 +366,45 @@ struct EventCenterView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
             }
+            if let event = selectedMajorEvent, let row = displayedRow {
+                ZStack {
+                    MajorEventDetailView(
+                        event: event,
+                        reports: reports(for: row, event: event),
+                        sourceNames: sourceNames,
+                        diagnostic: model.eventDiagnostics[event.id],
+                        openSource: openEventSource,
+                        openAnalysis: { openAnalysis(for: row.id) }
+                    )
+                    .id(StoryIdentity(tabID: currentTab?.id, rowID: row.id, revealRevision: revealRevision))
+                    .opacity(showingEventSource ? 0 : 1)
+                    .allowsHitTesting(!showingEventSource)
+                    .accessibilityHidden(showingEventSource)
+
+                    browserReader
+                        .opacity(showingEventSource ? 1 : 0)
+                        .allowsHitTesting(showingEventSource)
+                        .accessibilityHidden(!showingEventSource)
+                }
+            } else {
+                browserReader
+            }
+        }
+        .background(PaneSurface(role: .reader))
+    }
+
+    private var browserReader: some View {
+        VStack(spacing: 0) {
+            if selectedMajorEvent != nil, showingEventSource {
+                HStack {
+                    Button("返回事件", systemImage: "chevron.left") { showingEventSource = false }
+                        .buttonStyle(.bordered)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                Divider()
+            }
             ZStack {
                 BrowserWorkspaceView(workspace: browser)
                     .opacity(missingStoryURL ? 0 : 1)
@@ -356,7 +427,6 @@ struct EventCenterView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(PaneSurface(role: .reader))
     }
 
     @ViewBuilder
@@ -424,6 +494,9 @@ struct EventCenterView: View {
         dismissReveal()
         selectedTabID = id
         if changedTab { selectedRowID = nil }
+        if changedTab, currentTab?.kind == .majorEvents {
+            showingEventSource = false
+        }
         normalizeSelection()
         if changedTab, let row = sortedRows.first(where: { $0.id == selectedRowID }) { openStory(row) }
     }
@@ -488,6 +561,9 @@ struct EventCenterView: View {
         }
         presentedRevealToken = model.pendingEventToken
         selectedTabID = tabID
+        if tabs.first(where: { $0.id == tabID })?.kind == .majorEvents {
+            showingEventSource = false
+        }
         if rowID != nil || isNewRequest || changedTab { selectedRowID = rowID }
         unresolvedReveal = false
         if isNewRequest || changedTab, let tab = tabs.first(where: { $0.id == tabID }),
@@ -507,12 +583,30 @@ struct EventCenterView: View {
     }
 
     private func reports(for row: SnapshotRow, event: EventCluster?) -> [StoredItem] {
-        let ids = Set(event?.itemIDs ?? []).union([row.id])
-        return model.items.filter { ids.contains($0.id) }.sorted { lhs, rhs in
+        let reports = event.map(reports(for:)) ?? []
+        guard !reports.isEmpty else {
+            return model.items.filter { $0.id == row.id }
+        }
+        return reports.sorted { lhs, rhs in
             if lhs.id == row.id { return rhs.id != row.id }
             if rhs.id == row.id { return false }
             return lhs.lastSeenAt > rhs.lastSeenAt
         }
+    }
+
+    private func reports(for event: EventCluster) -> [StoredItem] {
+        let ids = Set(event.itemIDs)
+        return model.items.filter { ids.contains($0.id) }.sorted { lhs, rhs in
+            return lhs.lastSeenAt > rhs.lastSeenAt
+        }
+    }
+
+    private func event(for itemID: String) -> EventCluster? {
+        if itemID.hasPrefix("event:"),
+           let eventID = UUID(uuidString: String(itemID.dropFirst("event:".count))) {
+            return model.events.first { $0.id == eventID }
+        }
+        return model.events.first { $0.itemIDs.contains(itemID) }
     }
 
     private var sourceNames: [String: String] {
@@ -523,7 +617,8 @@ struct EventCenterView: View {
     }
 
     private func updateDate(for row: SnapshotRow) -> Date? {
-        model.items.first { $0.id == row.id }?.lastSeenAt
+        row.publishedAt
+            ?? model.items.first { $0.id == row.id }?.lastSeenAt
             ?? currentTab?.updatedAt
             ?? model.snapshot?.generatedAt
     }
@@ -538,6 +633,11 @@ struct EventCenterView: View {
 
     private func openStory(_ row: SnapshotRow, inNewTab: Bool = false) {
         openedRow = row
+        if currentTab?.kind == .majorEvents, event(for: row) != nil {
+            showingEventSource = false
+            missingStoryURL = false
+            return
+        }
         let candidates = [row.url, model.items.first(where: { $0.id == row.id })?.item.url]
         if let url = candidates.compactMap({ $0 }).first(where: {
             ["http", "https"].contains($0.scheme?.lowercased() ?? "") && $0.host != nil
@@ -550,8 +650,19 @@ struct EventCenterView: View {
     }
 
     private func fallbackEvidence(for itemID: String) -> String? {
+        if let event = event(for: itemID) {
+            return reports(for: event).prefix(3).enumerated().map { index, report in
+                "[\(index + 1)] \(report.item.title)\n来源：\(sourceNames[report.item.sourceID] ?? report.item.sourceID)\n摘要：\(report.item.summary ?? "当前材料仅有标题")\n来源地址：\(AIVisibleAddress.string(for: report.item.url))"
+            }.joined(separator: "\n\n")
+        }
         guard let row = openedRow, row.id == itemID else { return nil }
         return "[1] \(row.title)\n来源：\(row.sourceTitle)\n来源地址：\(row.url.map(AIVisibleAddress.string(for:)) ?? "")"
+    }
+
+    private func openEventSource(_ report: StoredItem) {
+        missingStoryURL = false
+        showingEventSource = true
+        browser.openStory(report.item.url, inNewTab: true)
     }
 
     private func openAnalysis(for itemID: SnapshotRow.ID) {
@@ -568,8 +679,10 @@ struct EventCenterView: View {
 
     private func researchHandler(for itemID: String) -> AnalysisChatModel.ToolHandler? {
         guard researchMode, model.analysisChat.supportsResearch else { return nil }
-        let title = model.items.first { $0.id == itemID }?.item.title ?? openedRow?.title ?? "热点研究"
-        let storyURL = model.items.first { $0.id == itemID }?.item.url ?? (openedRow?.id == itemID ? openedRow?.url : nil)
+        let event = event(for: itemID) ?? openedRow.flatMap(event(for:))
+        let eventReport = event.flatMap { reports(for: $0).first }
+        let title = event?.title ?? model.items.first { $0.id == itemID }?.item.title ?? openedRow?.title ?? "热点研究"
+        let storyURL = eventReport?.item.url ?? model.items.first { $0.id == itemID }?.item.url ?? (openedRow?.id == itemID ? openedRow?.url : nil)
         return { request, runID in try await browserTools.execute(request, runID: runID, itemID: itemID, taskTitle: title, currentStoryURL: storyURL) }
     }
 }
