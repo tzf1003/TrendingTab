@@ -48,6 +48,7 @@ public final class TrendingAppModel: ObservableObject {
     @Published public private(set) var settings: AppSettings = .standard
     @Published public private(set) var items: [StoredItem] = []
     @Published public private(set) var events: [EventCluster] = []
+    @Published public private(set) var eventDiagnostics: [UUID: EventDiagnostic] = [:]
     @Published public private(set) var diagnostics: [DiagnosticRecord] = []
     @Published public private(set) var unknownAutomaticRuns = 0
     @Published public private(set) var analyzingMajorEvents = false
@@ -109,6 +110,9 @@ public final class TrendingAppModel: ObservableObject {
     }
     private var semanticCache: [UUID: [String: SemanticDecision]] = [:]
     private var summaryCache: [UUID: String] = [:]
+    private var eventIDRedirects: [UUID: EventIDRedirect] = [:]
+    private static let eventDiagnosticsDocumentKey = "eventDiagnostics"
+    private static let eventIDRedirectsDocumentKey = "eventIDRedirects"
 
     public convenience init(database: AppDatabase, transport: any HTTPTransport = URLSessionTransport(), agentBridge: AgentBridge? = nil,
                             runtimeInstaller: AgentRuntimeInstaller? = nil) {
@@ -302,7 +306,7 @@ public final class TrendingAppModel: ObservableObject {
 
     public func reveal(eventID: UUID) {
         requestedTabID = nil
-        requestedEventID = eventID
+        requestedEventID = resolvedEventID(eventID)
         requestedItemID = nil
         pendingEventToken += 1
     }
@@ -317,14 +321,13 @@ public final class TrendingAppModel: ObservableObject {
     public func reveal(itemID: String?, eventID: UUID?, tabID: UUID? = nil) {
         requestedTabID = tabID
         requestedItemID = itemID
-        requestedEventID = eventID ?? itemID.flatMap { id in
-            events.first { $0.itemIDs.contains(id) }?.id
-        }
+        requestedEventID = eventID.map(resolvedEventID) ?? itemID.flatMap { id in events.first { $0.itemIDs.contains(id) }?.id }
         pendingEventToken += 1
     }
 
     public func reveal(request: String) {
-        if let eventID = UUID(uuidString: request), events.contains(where: { $0.id == eventID }) {
+        let eventRequest = request.hasPrefix("event:") ? String(request.dropFirst("event:".count)) : request
+        if let eventID = UUID(uuidString: eventRequest), events.contains(where: { $0.id == resolvedEventID(eventID) }) {
             reveal(eventID: eventID)
         } else {
             reveal(itemID: request)
@@ -377,10 +380,12 @@ public final class TrendingAppModel: ObservableObject {
             let merged = merge(existing: events, grouped: grouped)
             let activeIDs = Set(items.map(\.id))
             events = merged.filter { event in event.itemIDs.contains { activeIDs.contains($0) } }
+            refreshEventDiagnostics(now: collectedAt)
             semanticCache = semanticCache.filter { id, _ in tabs.contains { $0.id == id } }.mapValues { $0.filter { activeIDs.contains($0.key) } }
             summaryCache = summaryCache.filter { id, _ in events.contains { $0.id == id } }
             try database.saveDocument(semanticCache, key: "ai-semantic-cache-v1")
             try database.saveDocument(summaryCache, key: "ai-summary-cache-v1")
+            try database.saveDocument(eventIDRedirects, key: Self.eventIDRedirectsDocumentKey)
             try publish(statuses: statuses, now: collectedAt)
             let completedAt = Date()
             expireContent(now: completedAt)
@@ -460,6 +465,11 @@ public final class TrendingAppModel: ObservableObject {
             events[index].confidence = nil
             events[index].category = nil
             events[index].summary = nil
+            events[index].assessmentReason = nil
+            events[index].assessmentEvidenceIDs = nil
+            events[index].assessmentVersion = nil
+            events[index].assessedAt = nil
+            events[index].brief = nil
             events[index].assessmentSourceIDs = nil
             events[index].status = "pending-analysis"
         }
@@ -509,8 +519,24 @@ public final class TrendingAppModel: ObservableObject {
     }
 
     private func merge(existing: [EventCluster], grouped: [EventCluster]) -> [EventCluster] {
-        grouped.map { cluster in
-            if let match = existing.first(where: { !$0.itemIDs.filter(cluster.itemIDs.contains).isEmpty }) {
+        let now = Date()
+        var redirects = eventIDRedirects
+        let merged = grouped.map { cluster in
+            let matches = existing.filter { !$0.itemIDs.filter(cluster.itemIDs.contains).isEmpty }
+            if let match = matches.min(by: { lhs, rhs in
+                if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }) {
+                let mergedIDs = Set(matches.map(\.id))
+                for previous in matches where previous.id != match.id {
+                    redirects[previous.id] = EventIDRedirect(targetID: match.id, updatedAt: now)
+                }
+                let redirectedSources = redirects.compactMap { source, redirect in
+                    source != match.id && mergedIDs.contains(redirect.targetID) ? source : nil
+                }
+                for source in redirectedSources {
+                    redirects[source] = EventIDRedirect(targetID: match.id, updatedAt: now)
+                }
                 var copy = cluster
                 copy.id = match.id
                 let assessmentCurrent = match.materialFingerprint == cluster.materialFingerprint && match.assessmentSourceIDs != nil
@@ -518,11 +544,15 @@ public final class TrendingAppModel: ObservableObject {
                 copy.confidence = assessmentCurrent ? match.confidence : nil
                 copy.category = assessmentCurrent ? match.category : nil
                 copy.summary = assessmentCurrent ? match.summary : nil
+                copy.assessmentReason = assessmentCurrent ? match.assessmentReason : nil
+                copy.assessmentEvidenceIDs = assessmentCurrent ? match.assessmentEvidenceIDs : nil
+                copy.assessmentVersion = assessmentCurrent ? match.assessmentVersion : nil
+                copy.assessedAt = assessmentCurrent ? match.assessedAt : nil
+                copy.brief = assessmentCurrent ? match.brief : nil
                 copy.evidenceLevel = assessmentCurrent ? match.evidenceLevel : cluster.evidenceLevel
                 if assessmentCurrent, let sources = match.assessmentSourceIDs {
-                    let authoritative = Set(tabs.filter { $0.kind == .majorEvents }.flatMap { $0.filter.authoritativeSourceIDs })
-                    copy.status = AssessmentParser.qualifiesAsMajor(importance: match.importance, confidence: match.confidence,
-                                                                     citedSources: Set(sources), authoritativeSources: authoritative) ? "major" : "candidate"
+                    copy.status = qualifiesForMajorEvent(importance: match.importance, confidence: match.confidence,
+                                                         citedSources: Set(sources)) ? "major" : "candidate"
                 } else {
                     copy.status = "pending-analysis"
                 }
@@ -533,6 +563,24 @@ public final class TrendingAppModel: ObservableObject {
             var created = cluster
             created.status = "pending-analysis"
             return created
+        }
+        eventIDRedirects = redirects
+        return merged
+    }
+
+    private func resolvedEventID(_ eventID: UUID) -> UUID {
+        var current = eventID
+        var visited = Set<UUID>()
+        while let redirect = eventIDRedirects[current], visited.insert(current).inserted {
+            current = redirect.targetID
+        }
+        return current
+    }
+
+    private func qualifiesForMajorEvent(importance: Int?, confidence: Double?, citedSources: Set<String>) -> Bool {
+        let filters = tabs.filter { $0.kind == .majorEvents }.map(\.filter)
+        return (filters.isEmpty ? [TabFilter()] : filters).contains {
+            MajorEventEligibility.qualifies(importance: importance, confidence: confidence, citedSources: citedSources, filter: $0)
         }
     }
 
@@ -551,6 +599,7 @@ public final class TrendingAppModel: ObservableObject {
         let authoritativeItems = Set(items.filter { authoritativeSources.contains($0.item.sourceID) }.map(\.id))
         let candidates = events.filter { $0.status == "pending-analysis" && !attempted.contains($0.id) }.sorted { lhs, rhs in
             func priority(_ event: EventCluster) -> Int {
+                if EventGrouper.isPersonnelChange(event.title) { return 3 }
                 if event.independentSourceCount >= 2 { return 2 }
                 return event.itemIDs.contains(where: authoritativeItems.contains) ? 1 : 0
             }
@@ -570,11 +619,15 @@ public final class TrendingAppModel: ObservableObject {
             let allowed = Set(reports.map(\.id))
             guard !allowed.isEmpty else { attempted.insert(candidate.id); continue }
             let evidenceSources = Dictionary(reports.map { ($0.id, $0.item.sourceID) }, uniquingKeysWith: { first, _ in first })
-            let evidence = reports.map { "- \($0.id): \($0.item.title) [\($0.item.sourceID)]" }.joined(separator: "\n")
+            let evidence: String = reports.map { report -> String in
+                let publishedAt = report.item.publishedAt ?? report.firstSeenAt
+                return "- \(report.id): [\(report.item.sourceID)]\n  发布时间：\(publishedAt.formatted(date: .numeric, time: .shortened))\n  标题：\(report.item.title)\n  已有摘要：\(report.item.summary?.trimmedNonEmpty() ?? "当前材料仅有标题")"
+            }.joined(separator: "\n")
             let exampleID = reports.first!.id
             let prompt = """
             请只依据下列材料判断同一事件的重要性。importance 为 0–100 的数字，confidence 为 0–1 的数字。
-            category、summary、reason 为字符串。evidenceIDs 为实际支持判断的完整材料 ID 字符串数组，须保留 ID 内的冒号。
+            判断时考虑公共影响范围、变化是否实质且持续、对公共治理或重要组织的影响，以及材料的确认程度。重要人物、政府领导人或重要组织负责人的辞职、离任、任命和接任属于重点候选；日常人员流动、个人职场讨论、假设提问和历史回顾不应仅凭动作词判为重大事件。
+            category、summary、reason 为字符串。summary 只概述已知事实；reason 解释为何重要或为何证据不足。evidenceIDs 为实际支持判断的完整材料 ID 字符串数组，须保留 ID 内的冒号。
             matchedTopicIDs 返回空数组。只返回一个 JSON 对象，格式例如：
             {"importance":80,"confidence":0.9,"category":"社会","summary":"事件摘要","reason":"判断理由","evidenceIDs":["\(exampleID)"],"matchedTopicIDs":[]}
             材料：
@@ -615,9 +668,17 @@ public final class TrendingAppModel: ObservableObject {
                     updated[index].confidence = assessment.confidence
                     updated[index].category = assessment.category
                     updated[index].summary = assessment.summary
+                    updated[index].assessmentReason = assessment.reason.trimmedNonEmpty()
+                    updated[index].assessmentEvidenceIDs = Array(Set(assessment.evidenceIDs)).sorted()
+                    updated[index].assessmentVersion = 2
+                    updated[index].assessedAt = Date()
+                    updated[index].brief = EventBrief(overview: assessment.summary,
+                                                      importanceAnalysis: assessment.reason.trimmedNonEmpty(),
+                                                      evidenceIDs: Array(Set(assessment.evidenceIDs)).sorted())
                     updated[index].assessmentSourceIDs = Array(Set(assessment.evidenceIDs.compactMap { evidenceSources[$0] })).sorted()
-                    updated[index].status = AssessmentParser.qualifiesAsMajor(assessment, evidenceSources: evidenceSources,
-                                                                            authoritativeSources: authoritativeSources) ? "major" : "candidate"
+                    let citedSources = Set(assessment.evidenceIDs.compactMap { evidenceSources[$0] })
+                    updated[index].status = qualifiesForMajorEvent(importance: assessment.importance, confidence: assessment.confidence,
+                                                                    citedSources: citedSources) ? "major" : "candidate"
                     updated[index].evidenceLevel = "标题与摘要"
                 }
                 publishingResult = true
@@ -625,15 +686,21 @@ public final class TrendingAppModel: ObservableObject {
                                            actualTokens: result.usage.total, events: updated)
                 publishingResult = false
                 self.events = updated
+                refreshEventDiagnostics()
             } catch {
                 try? database.finishAIRun(id: runID, state: usedTokens == nil || publishingResult ? "unknown-accounted" : "failed-accounted", actualTokens: usedTokens)
                 updateUnknownAutomaticRuns()
                 guard !Task.isCancelled else { return }
                 let message = (error as? SourceFailure)?.message ?? error.localizedDescription
+                if let failure = error as? SourceFailure, case .schemaChanged = failure {
+                    recordEventDiagnostic(for: candidate, stage: "failed", message: message)
+                    continue
+                }
                 majorEventAnalysisIssue = "事件分析失败：\(message)"
                 diagnostics.removeAll { $0.id == "event-analysis" }
                 diagnostics.append(DiagnosticRecord(id: "event-analysis", title: "重大事件分析", state: "failed",
                     message: message, checkedAt: .now, lastSuccessAt: nil))
+                recordEventDiagnostic(for: candidate, stage: "failed", message: message)
                 return
             }
         }
@@ -648,6 +715,11 @@ public final class TrendingAppModel: ObservableObject {
         if let majorEventAnalysisIssue { return majorEventAnalysisIssue }
         let completed = events.filter { $0.status != "pending-analysis" }.count
         if analyzingMajorEvents { return "正在分析事件（\(completed)/\(events.count)）" }
+        let failed = events.filter { eventDiagnostics[$0.id]?.stage == "failed" }
+        if let first = failed.first {
+            let message = eventDiagnostics[first.id]?.message ?? "模型输出无法解析"
+            return "有 \(failed.count) 个事件分析失败：\(message)"
+        }
         if unknownAutomaticRuns > 0 {
             return "有 \(unknownAutomaticRuns) 次自动调用结果待确认，请在设置中检查后重试。"
         }
@@ -680,7 +752,7 @@ public final class TrendingAppModel: ObservableObject {
     private func summaryFingerprint(_ event: EventCluster, connection: AIConnection) -> String {
         let connectionData = (try? TrendingJSON.data(connection)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         let headers = connectionHeaders(connection).sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }.joined(separator: "\n")
-        return "\(event.materialFingerprint)|\(connectionData)|\(headers)|\(settings.promptVersion)|\(settings.automaticSummaryReadOriginal)|summary-v2".sha256Prefix
+        return "\(event.materialFingerprint)|\(connectionData)|\(headers)|\(settings.promptVersion)|\(settings.automaticSummaryReadOriginal)|summary-v3".sha256Prefix
     }
 
     private func summarizeMajorEvent(attempted: inout Set<UUID>) async -> Bool {
@@ -732,14 +804,18 @@ public final class TrendingAppModel: ObservableObject {
                 try database.finishAIRun(id: runID, state: "discarded", actualTokens: usedTokens)
                 return true
             }
-            let text = try EventSummaryParser.parse(result.text, allowedEvidence: material.allowedEvidence)
+            let brief = try EventSummaryParser.parseBrief(result.text, allowedEvidence: material.allowedEvidence)
             guard let index = events.firstIndex(where: { $0.id == event.id && $0.materialFingerprint == event.materialFingerprint }) else {
                 try database.finishAIRun(id: runID, state: "failed-accounted", actualTokens: usedTokens)
                 return true
             }
             var updated = events
             var cache = summaryCache
-            updated[index].summary = text
+            updated[index].summary = brief.overview
+            updated[index].brief = EventBrief(overview: brief.overview,
+                                              importanceAnalysis: brief.importanceAnalysis ?? updated[index].assessmentReason,
+                                              openQuestions: brief.openQuestions,
+                                              evidenceIDs: brief.evidenceIDs)
             updated[index].evidenceLevel = material.evidenceLevel
             cache[event.id] = rule
             publishingResult = true
@@ -748,6 +824,7 @@ public final class TrendingAppModel: ObservableObject {
             publishingResult = false
             events = updated
             summaryCache = cache
+            refreshEventDiagnostics()
         } catch {
             try? database.finishAIRun(id: runID, state: usedTokens == nil || publishingResult ? "unknown-accounted" : "failed-accounted", actualTokens: usedTokens)
             updateUnknownAutomaticRuns()
@@ -948,8 +1025,8 @@ public final class TrendingAppModel: ObservableObject {
         return try await agentBridge.discoverMCPTools(config: config)
     }
 
-    private func analysisEvidence(for itemID: String) -> String {
-        let event = events.first { $0.itemIDs.contains(itemID) }
+    func analysisEvidence(for itemID: String) -> String {
+        let event = event(forAnalysisID: itemID)
         let ids = Set(event?.itemIDs ?? [itemID])
         let reports = items.filter { ids.contains($0.id) }.sorted {
             if ($0.id == itemID) != ($1.id == itemID) { return $0.id == itemID }
@@ -958,6 +1035,80 @@ public final class TrendingAppModel: ObservableObject {
         return reports.enumerated().map { index, stored in
             "[\(index + 1)] \(stored.item.title)\n来源：\(stored.item.sourceID)\n摘要：\(stored.item.summary ?? "当前材料仅有标题")\n来源地址：\(AIVisibleAddress.string(for: stored.item.url))"
         }.joined(separator: "\n\n")
+    }
+
+    private func event(forAnalysisID id: String) -> EventCluster? {
+        if id.hasPrefix("event:"),
+           let eventID = UUID(uuidString: String(id.dropFirst("event:".count))),
+           let event = events.first(where: { $0.id == eventID }) {
+            return event
+        }
+        return events.first { $0.itemIDs.contains(id) }
+    }
+
+    private func refreshEventDiagnostics(now: Date = .now) {
+        let cutoff = now.addingTimeInterval(-7 * 24 * 3600)
+        var updated = eventDiagnostics.filter { $0.value.updatedAt >= cutoff }
+        for event in events {
+            let reports = items.filter { event.itemIDs.contains($0.id) }
+            let materialIDs = reports.map(\.id).sorted()
+            if let previous = updated[event.id], previous.stage == "failed", event.status == "pending-analysis",
+               previous.materialIDs == materialIDs {
+                continue
+            }
+            let state = eventDiagnosticState(for: event)
+            updated[event.id] = EventDiagnostic(
+                id: event.id,
+                stage: state.stage,
+                message: state.message,
+                materialIDs: materialIDs,
+                sourceIDs: Set(reports.map { $0.item.sourceID }).sorted(),
+                groupingReason: event.groupingReason,
+                assessmentVersion: event.assessmentVersion,
+                importance: event.importance,
+                confidence: event.confidence,
+                evidenceIDs: (event.assessmentEvidenceIDs ?? []).sorted(),
+                updatedAt: now
+            )
+        }
+        eventDiagnostics = updated
+        try? database.saveDocument(updated, key: Self.eventDiagnosticsDocumentKey)
+    }
+
+    private func recordEventDiagnostic(for event: EventCluster, stage: String, message: String, now: Date = .now) {
+        let reports = items.filter { event.itemIDs.contains($0.id) }
+        eventDiagnostics[event.id] = EventDiagnostic(
+            id: event.id,
+            stage: stage,
+            message: message,
+            materialIDs: reports.map(\.id).sorted(),
+            sourceIDs: Set(reports.map { $0.item.sourceID }).sorted(),
+            groupingReason: event.groupingReason,
+            assessmentVersion: event.assessmentVersion,
+            importance: event.importance,
+            confidence: event.confidence,
+            evidenceIDs: (event.assessmentEvidenceIDs ?? []).sorted(),
+            updatedAt: now
+        )
+        try? database.saveDocument(eventDiagnostics, key: Self.eventDiagnosticsDocumentKey)
+    }
+
+    private func eventDiagnosticState(for event: EventCluster) -> (stage: String, message: String) {
+        switch event.status {
+        case "major":
+            return ("published", "已满足当前重大事件展示条件。")
+        case "pending-analysis":
+            return ("pending-analysis", "已归并，等待自动分析。")
+        case "candidate":
+            let rule = tabs.first(where: { $0.kind == .majorEvents })?.filter ?? TabFilter()
+            if MajorEventEligibility.meetsAssessmentThresholds(event, filter: rule),
+               !MajorEventEligibility.hasRequiredEvidence(event, filter: rule) {
+                return ("needs-evidence", "重要度与置信度达到要求，仍需补充独立来源或权威来源。")
+            }
+            return ("assessed", "当前材料未满足重大事件展示条件。")
+        default:
+            return ("collected", "已采集，等待归并与分析。")
+        }
     }
 
     private func expireContent(now: Date = .now) {
@@ -972,10 +1123,12 @@ public final class TrendingAppModel: ObservableObject {
                 let freshSummaries = summaryCache.filter { id, _ in freshEvents.contains { $0.id == id } }
                 try database.prune(now: now, itemCutoff: cutoff, events: freshEvents, documents: [
                     "ai-semantic-cache-v1": TrendingJSON.data(freshSemantic),
-                    "ai-summary-cache-v1": TrendingJSON.data(freshSummaries)
+                    "ai-summary-cache-v1": TrendingJSON.data(freshSummaries),
+                    Self.eventIDRedirectsDocumentKey: TrendingJSON.data(eventIDRedirects)
                 ])
                 items = freshItems
                 events = freshEvents
+                refreshEventDiagnostics(now: now)
                 semanticCache = freshSemantic
                 summaryCache = freshSummaries
                 try publish(statuses: snapshot?.statuses ?? [], now: now)
@@ -1030,7 +1183,10 @@ public final class TrendingAppModel: ObservableObject {
         try? database.prune(now: .now, itemCutoff: activeCutoff(now: .now))
         items = (try? database.recentItems(since: .distantPast)) ?? []
         let storedEvents = (try? database.events()) ?? []
+        eventIDRedirects = (try? database.document([UUID: EventIDRedirect].self, key: Self.eventIDRedirectsDocumentKey)) ?? [:]
         events = merge(existing: storedEvents, grouped: EventGrouper.group(items, now: .now))
+        eventDiagnostics = (try? database.document([UUID: EventDiagnostic].self, key: Self.eventDiagnosticsDocumentKey)) ?? [:]
+        refreshEventDiagnostics()
         semanticCache = (try? database.document([UUID: [String: SemanticDecision]].self, key: "ai-semantic-cache-v1")) ?? [:]
         summaryCache = (try? database.document([UUID: String].self, key: "ai-summary-cache-v1")) ?? [:]
         let activeIDs = Set(items.map(\.id))
@@ -1039,6 +1195,7 @@ public final class TrendingAppModel: ObservableObject {
         try? database.save(events: events)
         try? database.saveDocument(semanticCache, key: "ai-semantic-cache-v1")
         try? database.saveDocument(summaryCache, key: "ai-summary-cache-v1")
+        try? database.saveDocument(eventIDRedirects, key: Self.eventIDRedirectsDocumentKey)
         snapshot = SnapshotStore.read(directory: snapshotDirectory)
         generation = (snapshot?.generation ?? 0) + 1
         _ = try? database.recoverUnknownAIRuns()
@@ -1053,6 +1210,7 @@ public final class TrendingAppModel: ObservableObject {
         try? database.saveDocument(feeds, key: "feeds")
         try? database.saveDocument(connections, key: "connections")
         try? database.saveDocument(assignment, key: "assignment")
+        try? database.saveDocument(eventIDRedirects, key: Self.eventIDRedirectsDocumentKey)
     }
 
     public func moveTabs(from offsets: IndexSet, to offset: Int) {

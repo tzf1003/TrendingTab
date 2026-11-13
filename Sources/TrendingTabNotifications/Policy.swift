@@ -16,9 +16,7 @@ public enum AlertPolicy {
             let matching = monitored.filter { tab in
                 guard !tab.blockedEventIDs.contains(event.id) else { return false }
                 if tab.kind == .majorEvents {
-                    let cited = Set(event.assessmentSourceIDs ?? [])
-                    return (event.importance ?? 0) >= tab.filter.minimumImportance && (event.confidence ?? 0) >= tab.filter.minimumConfidence &&
-                        (cited.count >= tab.filter.minimumIndependentSources || !cited.isDisjoint(with: tab.filter.authoritativeSourceIDs))
+                    return MajorEventEligibility.passes(event, filter: tab.filter)
                 }
                 return tab.trackedEventIDs.contains(event.id) || tab.filter.includedWords.contains { event.title.localizedCaseInsensitiveContains($0) }
             }

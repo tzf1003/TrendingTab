@@ -135,6 +135,50 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(result.rows.isEmpty)
     }
 
+    func testMajorEventSnapshotUsesStableEventIdentityAndTitle() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let first = StoredItem(item: NormalizedItem(sourceID: "weibo", boardID: "weibo.hot", nativeID: "1", title: "来源标题一", url: URL(string: "https://example.com/1")!, rank: 2), firstSeenAt: now, lastSeenAt: now, previousRank: nil, contentHash: "a", historical: false)
+        let second = StoredItem(item: NormalizedItem(sourceID: "baidu", boardID: "baidu.hot", nativeID: "2", title: "来源标题二", url: URL(string: "https://example.com/2")!, rank: 1), firstSeenAt: now, lastSeenAt: now, previousRank: nil, contentHash: "b", historical: false)
+        let event = EventCluster(title: "重大人事变动", itemIDs: [first.id, second.id], independentSourceCount: 2,
+                                 importance: 90, confidence: 0.9, assessmentSourceIDs: ["baidu", "weibo"], status: "major",
+                                 materialFingerprint: "event", updatedAt: now, createdAt: now)
+        let tab = TabDefinition(title: "重大事件", kind: .majorEvents, sort: .importance)
+
+        let snapshot = TabAggregator.snapshot(tabs: [tab], profiles: [], items: [first, second], events: [event], statuses: [], sources: [], unread: 1, generation: 1, now: now)
+        let row = try XCTUnwrap(snapshot.tabs.first?.rows.first)
+
+        XCTAssertEqual(row.id, "event:\(event.id.uuidString)")
+        XCTAssertEqual(row.eventID, event.id)
+        XCTAssertEqual(row.title, event.title)
+        XCTAssertNil(row.url)
+    }
+
+    func testEventAssessmentDetailsRoundTripAndLegacyEventsDecode() throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var event = EventCluster(title: "重大人事变动", itemIDs: ["weibo:1"], independentSourceCount: 1,
+                                 materialFingerprint: "event", updatedAt: now, createdAt: now)
+        event.assessmentReason = "负责人变动可能影响公司战略与治理。"
+        event.assessmentEvidenceIDs = ["weibo:1"]
+        event.assessmentVersion = 2
+        event.assessedAt = now
+        event.brief = EventBrief(overview: "负责人宣布辞职。", importanceAnalysis: "涉及重要组织负责人变动。",
+                                 openQuestions: ["继任安排尚待确认。"], evidenceIDs: ["weibo:1"])
+
+        let encoded = try TrendingJSON.data(event)
+        let decoded = try TrendingJSON.value(EventCluster.self, from: encoded)
+        XCTAssertEqual(decoded.assessmentReason, event.assessmentReason)
+        XCTAssertEqual(decoded.assessmentEvidenceIDs, event.assessmentEvidenceIDs)
+        XCTAssertEqual(decoded.assessmentVersion, 2)
+        XCTAssertEqual(decoded.assessedAt, now)
+        XCTAssertEqual(decoded.brief, event.brief)
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        ["assessmentReason", "assessmentEvidenceIDs", "assessmentVersion", "assessedAt", "brief"].forEach { legacy.removeValue(forKey: $0) }
+        let legacyEvent = try TrendingJSON.value(EventCluster.self, from: JSONSerialization.data(withJSONObject: legacy))
+        XCTAssertNil(legacyEvent.assessmentReason)
+        XCTAssertNil(legacyEvent.brief)
+    }
+
     func testMajorTabAndAlertUseOnlyAssessedSources() throws {
         let now = Date()
         let item = StoredItem(item: NormalizedItem(sourceID: "zhihu", boardID: "zhihu.hot", nativeID: "1", title: "测试", url: URL(string: "https://example.com/1")!, rank: 1), firstSeenAt: now, lastSeenAt: now, previousRank: nil, contentHash: "a", historical: false)
@@ -155,6 +199,24 @@ final class CoreTests: XCTestCase {
         json.removeValue(forKey: "assessmentSourceIDs")
         let legacy = try TrendingJSON.value(EventCluster.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(legacy.assessmentSourceIDs)
+    }
+
+    func testMajorEventEligibilityUsesTheSameAssessmentGate() {
+        let now = Date()
+        var event = EventCluster(title: "测试", itemIDs: ["source:1"], independentSourceCount: 2,
+                                 importance: 90, confidence: 0.9, assessmentSourceIDs: ["source"],
+                                 status: "major", materialFingerprint: "a", updatedAt: now, createdAt: now)
+
+        XCTAssertFalse(MajorEventEligibility.passes(event, filter: TabFilter()))
+
+        event.assessmentSourceIDs = ["source", "other"]
+        XCTAssertTrue(MajorEventEligibility.passes(event, filter: TabFilter()))
+
+        event.status = "candidate"
+        XCTAssertFalse(MajorEventEligibility.passes(event, filter: TabFilter()))
+
+        let custom = TabFilter(minimumImportance: 60, minimumConfidence: 0.7, minimumIndependentSources: 1)
+        XCTAssertTrue(MajorEventEligibility.qualifies(importance: 60, confidence: 0.7, citedSources: ["source"], filter: custom))
     }
 
     func testEventFingerprintChangesWhenEvidenceContentChanges() throws {
@@ -275,6 +337,11 @@ final class CoreTests: XCTestCase {
 
     func testAutomaticSummaryRequiresKnownEvidence() throws {
         XCTAssertEqual(try EventSummaryParser.parse(#"{"summary":" 已知情况 ","evidenceIDs":["known"]}"#, allowedEvidence: ["known"]), "已知情况")
+        let brief = try EventSummaryParser.parseBrief(#"{"summary":" 已知情况 ","importanceAnalysis":"可能影响组织治理","openQuestions":["继任安排"],"evidenceIDs":["known"]}"#, allowedEvidence: ["known"])
+        XCTAssertEqual(brief.overview, "已知情况")
+        XCTAssertEqual(brief.importanceAnalysis, "可能影响组织治理")
+        XCTAssertEqual(brief.openQuestions, ["继任安排"])
+        XCTAssertEqual(brief.evidenceIDs, ["known"])
         XCTAssertThrowsError(try EventSummaryParser.parse(#"{"summary":"摘要","evidenceIDs":["unknown"]}"#, allowedEvidence: ["known"]))
         XCTAssertThrowsError(try EventSummaryParser.parse(#"{"summary":"摘要","evidenceIDs":[]}"#, allowedEvidence: ["known"]))
         XCTAssertThrowsError(try EventSummaryParser.parse(#"{"summary":" ","evidenceIDs":["known"]}"#, allowedEvidence: ["known"]))

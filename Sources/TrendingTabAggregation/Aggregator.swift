@@ -5,6 +5,14 @@ public struct AggregatedRow: Equatable, Sendable {
     public var stored: StoredItem
     public var score: Double
     public var movement: String?
+    public var event: EventCluster?
+
+    public init(stored: StoredItem, score: Double, movement: String?, event: EventCluster? = nil) {
+        self.stored = stored
+        self.score = score
+        self.movement = movement
+        self.event = event
+    }
 }
 
 public enum RankFusion {
@@ -65,14 +73,11 @@ public enum TabAggregator {
             let allowed = events.filter { event in
                 if tab.blockedEventIDs.contains(event.id) { return false }
                 if tab.kind == .trackedEvents { return tab.trackedEventIDs.contains(event.id) }
-                let citedSources = Set(event.assessmentSourceIDs ?? [])
-                let authoritative = !citedSources.isDisjoint(with: tab.filter.authoritativeSourceIDs)
-                let passes = (event.importance ?? 0) >= tab.filter.minimumImportance && (event.confidence ?? 0) >= tab.filter.minimumConfidence && (citedSources.count >= tab.filter.minimumIndependentSources || authoritative)
-                return event.status == "major" && passes
+                return MajorEventEligibility.passes(event, filter: tab.filter)
             }.sorted { ($0.importance ?? 0, $0.updatedAt) > ($1.importance ?? 0, $1.updatedAt) }
             let rows = allowed.compactMap { event -> AggregatedRow? in
                 guard let stored = items.first(where: { event.itemIDs.contains($0.id) }) else { return nil }
-                return AggregatedRow(stored: stored, score: Double(event.importance ?? 0), movement: event.category)
+                return AggregatedRow(stored: stored, score: Double(event.importance ?? 0), movement: event.category, event: event)
             }
             let pending = events.contains { $0.status == "pending-analysis" }
             return (rows, pending ? "部分内容待分析" : (rows.isEmpty ? "没有匹配内容" : "已覆盖当前材料"))
@@ -88,7 +93,12 @@ public enum TabAggregator {
                 title: tab.title,
                 kind: tab.kind,
                 rows: result.rows.prefix(30).map { row in
-                    SnapshotRow(id: row.stored.id, title: row.stored.item.title, sourceTitle: names[row.stored.item.sourceID] ?? row.stored.item.sourceID, rank: row.stored.item.rank, movement: row.movement, url: row.stored.item.url, eventID: events.first { $0.itemIDs.contains(row.stored.id) }?.id, publishedAt: row.stored.item.publishedAt, score: row.score, expiresAt: row.stored.lastSeenAt.addingTimeInterval(min(lifetime, tab.filter.timeWindow)))
+                    if let event = row.event {
+                        return SnapshotRow(id: "event:\(event.id.uuidString)", title: event.title, sourceTitle: "重大事件", rank: nil,
+                                           movement: row.movement, url: nil, eventID: event.id, publishedAt: event.updatedAt,
+                                           score: row.score, expiresAt: event.updatedAt.addingTimeInterval(min(lifetime, tab.filter.timeWindow)))
+                    }
+                    return SnapshotRow(id: row.stored.id, title: row.stored.item.title, sourceTitle: names[row.stored.item.sourceID] ?? row.stored.item.sourceID, rank: row.stored.item.rank, movement: row.movement, url: row.stored.item.url, eventID: events.first { $0.itemIDs.contains(row.stored.id) }?.id, publishedAt: row.stored.item.publishedAt, score: row.score, expiresAt: row.stored.lastSeenAt.addingTimeInterval(min(lifetime, tab.filter.timeWindow)))
                 },
                 coverage: result.coverage,
                 updatedAt: result.rows.map(\.stored.lastSeenAt).max(),
@@ -102,6 +112,10 @@ public enum TabAggregator {
 }
 
 public enum EventGrouper {
+    public static func isPersonnelChange(_ title: String) -> Bool {
+        personnelChange(in: title) != nil
+    }
+
     public static func group(_ items: [StoredItem], now: Date) -> [EventCluster] {
         var clusters: [EventCluster] = []
         let titleTokens = Dictionary(items.map { ($0.item.title, Set(tokenize($0.item.title))) }, uniquingKeysWith: { first, _ in first })
@@ -119,14 +133,22 @@ public enum EventGrouper {
                 let enough = !hasChinese || shared >= 3
                 let existingNumbers = Set(existing.filter { $0.allSatisfy(\.isNumber) })
                 let compatibleNumbers = numbers.isEmpty || existingNumbers.isEmpty || numbers == existingNumbers
-                return (exact || (enough && compatibleNumbers && overlap >= 0.6 && coverage >= 0.45)) && now.timeIntervalSince(cluster.updatedAt) < 48 * 3600
+                let titleMatch = exact || (enough && compatibleNumbers && overlap >= 0.6 && coverage >= 0.45)
+                let personnel = personnelRelationship(cluster.title, stored.item.title)
+                let eligibleTitleMatch = titleMatch && personnel != .conflict
+                return (eligibleTitleMatch || personnel == .same) && now.timeIntervalSince(cluster.updatedAt) < 48 * 3600
             }) {
                 var cluster = clusters[index]
                 if !cluster.itemIDs.contains(stored.id) { cluster.itemIDs.append(stored.id) }
                 cluster.updatedAt = max(cluster.updatedAt, stored.lastSeenAt)
+                cluster.groupingReason = personnelRelationship(cluster.title, stored.item.title) == .same
+                    ? "人事变动主体与动作一致"
+                    : "标题相似"
                 clusters[index] = cluster
             } else {
-                clusters.append(EventCluster(title: stored.item.title, itemIDs: [stored.id], independentSourceCount: 1, materialFingerprint: stored.id.sha256Prefix, updatedAt: stored.lastSeenAt, createdAt: stored.firstSeenAt))
+                clusters.append(EventCluster(title: stored.item.title, itemIDs: [stored.id], independentSourceCount: 1,
+                                             groupingReason: "单条报道", materialFingerprint: stored.id.sha256Prefix,
+                                             updatedAt: stored.lastSeenAt, createdAt: stored.firstSeenAt))
             }
         }
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -152,5 +174,42 @@ public enum EventGrouper {
             guard characters.count > 1 else { return [] }
             return zip(characters, characters.dropFirst()).map { String([$0, $1]) }
         }
+    }
+
+    private enum PersonnelRelationship {
+        case unrelated, same, conflict
+    }
+
+    private static func personnelRelationship(_ lhs: String, _ rhs: String) -> PersonnelRelationship {
+        guard let left = personnelChange(in: lhs), let right = personnelChange(in: rhs),
+              !left.actions.isDisjoint(with: right.actions) else {
+            return .unrelated
+        }
+        return left.subject == right.subject ? .same : .conflict
+    }
+
+    private static func personnelChange(in title: String) -> (subject: String, actions: Set<String>)? {
+        let actions = [
+            ("resignation", ["引咎辞职", "辞去职务", "辞去", "辞职", "辞任"]),
+            ("departure", ["任期届满", "卸任", "离任"]),
+            ("appointment", ["任命", "就任", "接任"]),
+        ]
+        let matches = actions.compactMap { family, words -> (String, Range<String.Index>)? in
+            words.compactMap { word in title.range(of: word).map { (family, $0) } }
+                .min { $0.1.lowerBound < $1.1.lowerBound }
+        }
+        guard let first = matches.min(by: { $0.1.lowerBound < $1.1.lowerBound }) else { return nil }
+        var actionFamilies = Set(matches.map(\.0))
+        if actionFamilies.contains("resignation") || actionFamilies.contains("departure") {
+            actionFamilies.insert("exit")
+        }
+        let prefix = String(title[..<first.1.lowerBound])
+        let subject = prefix
+            .replacingOccurrences(of: "宣布", with: "")
+            .replacingOccurrences(of: "正式", with: "")
+            .replacingOccurrences(of: "将", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard subject.count >= 2, subject.count <= 32 else { return nil }
+        return (subject, actionFamilies)
     }
 }

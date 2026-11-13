@@ -237,6 +237,59 @@ public struct StoredItem: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+public struct EventBrief: Codable, Equatable, Hashable, Sendable {
+    public var overview: String
+    public var importanceAnalysis: String?
+    public var openQuestions: [String]
+    public var evidenceIDs: [String]
+
+    public init(overview: String, importanceAnalysis: String? = nil, openQuestions: [String] = [], evidenceIDs: [String] = []) {
+        self.overview = overview
+        self.importanceAnalysis = importanceAnalysis
+        self.openQuestions = openQuestions
+        self.evidenceIDs = evidenceIDs
+    }
+}
+
+public struct EventDiagnostic: Codable, Equatable, Hashable, Sendable, Identifiable {
+    public var id: UUID
+    public var stage: String
+    public var message: String
+    public var materialIDs: [String]
+    public var sourceIDs: [String]
+    public var groupingReason: String?
+    public var assessmentVersion: Int?
+    public var importance: Int?
+    public var confidence: Double?
+    public var evidenceIDs: [String]
+    public var updatedAt: Date
+
+    public init(id: UUID, stage: String, message: String, materialIDs: [String], sourceIDs: [String], groupingReason: String? = nil,
+                assessmentVersion: Int? = nil, importance: Int? = nil, confidence: Double? = nil, evidenceIDs: [String] = [], updatedAt: Date) {
+        self.id = id
+        self.stage = stage
+        self.message = message
+        self.materialIDs = materialIDs
+        self.sourceIDs = sourceIDs
+        self.groupingReason = groupingReason
+        self.assessmentVersion = assessmentVersion
+        self.importance = importance
+        self.confidence = confidence
+        self.evidenceIDs = evidenceIDs
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct EventIDRedirect: Codable, Equatable, Hashable, Sendable {
+    public var targetID: UUID
+    public var updatedAt: Date
+
+    public init(targetID: UUID, updatedAt: Date) {
+        self.targetID = targetID
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: UUID
     public var title: String
@@ -246,9 +299,15 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
     public var confidence: Double?
     public var category: String?
     public var summary: String?
+    public var assessmentReason: String?
+    public var assessmentEvidenceIDs: [String]?
+    public var assessmentVersion: Int?
+    public var assessedAt: Date?
+    public var brief: EventBrief?
     /// Sources actually cited by the model, distinct from all reports in the cluster.
     public var assessmentSourceIDs: [String]?
     public var evidenceLevel: String
+    public var groupingReason: String?
     public var status: String
     public var materialFingerprint: String
     public var updatedAt: Date
@@ -263,8 +322,14 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
         confidence: Double? = nil,
         category: String? = nil,
         summary: String? = nil,
+        assessmentReason: String? = nil,
+        assessmentEvidenceIDs: [String]? = nil,
+        assessmentVersion: Int? = nil,
+        assessedAt: Date? = nil,
+        brief: EventBrief? = nil,
         assessmentSourceIDs: [String]? = nil,
         evidenceLevel: String = "标题与摘要",
+        groupingReason: String? = nil,
         status: String = "candidate",
         materialFingerprint: String,
         updatedAt: Date,
@@ -278,8 +343,14 @@ public struct EventCluster: Codable, Equatable, Hashable, Sendable, Identifiable
         self.confidence = confidence
         self.category = category
         self.summary = summary
+        self.assessmentReason = assessmentReason
+        self.assessmentEvidenceIDs = assessmentEvidenceIDs
+        self.assessmentVersion = assessmentVersion
+        self.assessedAt = assessedAt
+        self.brief = brief
         self.assessmentSourceIDs = assessmentSourceIDs
         self.evidenceLevel = evidenceLevel
+        self.groupingReason = groupingReason
         self.status = status
         self.materialFingerprint = materialFingerprint
         self.updatedAt = updatedAt
